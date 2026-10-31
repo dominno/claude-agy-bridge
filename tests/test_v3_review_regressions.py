@@ -231,28 +231,19 @@ def test_runner_tolerates_status_probe_lock(h, monkeypatch):
 
 def test_detached_child_cannot_survive_grading(proposal):
     h, case = proposal
-    child = "import os,time;open('detached.pid','w').write(str(os.getpid()));time.sleep(30)"
+    # A heartbeat, not a PID: a PID from inside the sandbox's namespace means nothing outside it.
+    child = "import time\nfor _ in range(600):\n    open('detached.beat','a').write('x')\n    time.sleep(.05)\n"
     payload = ("import subprocess,sys,time; "
                f"subprocess.Popen([sys.executable,'-c',{child!r}], start_new_session=True, "
                "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
                "time.sleep(.2); unused=2")
     rows,_,_=grading.grade(str(h.repo),case,[dict(file='impl.py',old='unused = 2',new=payload,why='detached child')])
-    pidfile=Path(rows[0]['tree'])/'detached.pid'
-    if pidfile.exists():
-        pid=int(pidfile.read_text())
-        alive=True
-        try:
-            deadline=time.monotonic()+2
-            while time.monotonic()<deadline:
-                try: os.kill(pid,0)
-                except ProcessLookupError:
-                    alive=False; break
-                time.sleep(.02)
-            assert not alive, 'setsid child survived process-group cleanup'
-        finally:
-            if alive:
-                try: os.kill(pid,signal.SIGKILL)
-                except ProcessLookupError: pass
+    beat=Path(rows[0]['tree'])/'detached.beat'
+    if beat.exists():
+        time.sleep(.2)
+        size=beat.stat().st_size
+        time.sleep(.5)
+        assert beat.stat().st_size==size, 'setsid child survived process-group cleanup'
     else:
         assert rows[0]['status']=='KILLED'  # macOS denies process-fork itself
 

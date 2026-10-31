@@ -58,7 +58,8 @@ def runtime_paths(command):
     """Read-only OS libraries and the chosen interpreter installation, never HOME."""
     paths = ['/System/Library', '/usr/lib', '/usr/lib64', '/usr/share', '/lib', '/lib64',
              '/dev/null', '/dev/urandom', '/dev/random', '/dev/zero', '/etc/ld.so.cache',
-             '/etc/localtime', '/opt/homebrew/lib', sys.base_prefix]
+             '/etc/localtime', '/opt/homebrew/lib', '/opt/homebrew/opt', '/opt/homebrew/Cellar',
+             '/usr/local/opt', '/usr/local/Cellar', sys.base_prefix]
     paths += interpreter_binaries(command)
     # A virtualenv's lib + pyvenv.cfg are needed even when bin/python is a symlink.
     for exe in (command, sys.executable):
