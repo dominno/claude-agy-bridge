@@ -1,0 +1,15 @@
+[project]
+name = "agy-bridge"
+version = "0.1.0"
+description = "Hand one bounded, read-only task to the Antigravity CLI (agy) from Claude Code."
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/dominno/claude-agy-bridge"
+Issues = "https://github.com/dominno/claude-agy-bridge/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

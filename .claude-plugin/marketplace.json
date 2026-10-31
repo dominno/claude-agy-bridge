@@ -1,0 +1,14 @@
+{
+  "name": "agy-bridge",
+  "owner": {
+    "name": "Dominik Szopa"
+  },
+  "plugins": [
+    {
+      "name": "agy",
+      "source": "./",
+      "description": "Hand one bounded, read-only task to the Antigravity CLI (agy)."
+    }
+  ],
+  "description": "agy-bridge: bounded, read-only delegation to the Antigravity CLI."
+}

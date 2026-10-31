@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""A stand-in for the agy CLI, for tests only. It never touches the network.
+
+It reads fake_agy.json from the folder this script lives in (not from the environment):
+  record_path  where to write the JSON record of this call
+  mode         ok | empty | exit | soft_denial | quota | auth | timeout | oversize
+  exit_code    used by mode "exit"
+  version      printed for --version (default 1.0.0)
+  answer       text printed in mode "ok"
+  oversize_bytes  size printed in mode "oversize"
+"""
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+CONFIG = {}
+try:
+    with open(os.path.join(HERE, "fake_agy.json")) as fh:
+        CONFIG = json.load(fh)
+except OSError:
+    pass
+
+args = sys.argv[1:]
+
+
+def side_record(kind):
+    """--version and models calls leave their own small record: <record_path>.<kind>."""
+    if CONFIG.get("record_path"):
+        with open(CONFIG["record_path"] + "." + kind, "w") as fh:
+            json.dump({"argv": sys.argv, "cwd": os.path.realpath(os.getcwd()), "env": dict(os.environ),
+                       "listing": sorted(os.listdir("."))}, fh)
+
+
+if args[:1] == ["--version"]:
+    side_record("version")
+    print("agy " + CONFIG.get("version", "1.0.0"))
+    sys.exit(0)
+if args[:1] == ["models"]:
+    side_record("models")
+    print("fake-model-1\nfake-model-2")
+    sys.exit(0)
+
+
+def listing(base):
+    found = []
+    for dirpath, dirnames, filenames in os.walk(base):
+        for name in dirnames + filenames:
+            full = os.path.join(dirpath, name)
+            found.append(os.path.relpath(full, base))
+    return sorted(found)
+
+
+def digests(base):
+    out = {}
+    for rel in listing(base):
+        full = os.path.join(base, rel)
+        if os.path.isfile(full):
+            with open(full, "rb") as fh:
+                out[rel] = hashlib.sha256(fh.read()).hexdigest()
+    return out
+
+
+child_pid = None
+if CONFIG.get("mode") == "timeout":
+    child_pid = subprocess.Popen(["sleep", "300"]).pid  # to prove the whole group is killed
+
+record = {
+    "argv": sys.argv,
+    "cwd": os.path.realpath(os.getcwd()),
+    "cwd_mode": os.stat(".").st_mode & 0o777,
+    "env": dict(os.environ),
+    "listing": listing("."),
+    "digests": digests("."),
+    "stdout_isatty": sys.stdout.isatty(),
+    "child_pid": child_pid,
+    "pid": os.getpid(),
+}
+if CONFIG.get("record_path"):
+    with open(CONFIG["record_path"], "w") as fh:
+        json.dump(record, fh)
+
+mode = CONFIG.get("mode", "ok")
+if mode == "ok":
+    print(CONFIG.get("answer", "fake answer"))
+elif mode == "empty":
+    pass
+elif mode == "exit":
+    sys.stderr.write("something went wrong\n")
+    sys.exit(int(CONFIG.get("exit_code", 1)))
+elif mode == "quota":
+    sys.stderr.write("RESOURCE_EXHAUSTED: quota exceeded\n")
+    sys.exit(1)
+elif mode == "auth":
+    sys.stderr.write("UNAUTHENTICATED: please log in\n")
+    sys.exit(1)
+elif mode == "soft_denial":
+    sys.stderr.write("tool call auto-denied\n")
+elif mode == "oversize":
+    sys.stdout.write("x" * int(CONFIG.get("oversize_bytes", 500000)))
+    sys.stdout.flush()
+elif mode == "timeout":
+    time.sleep(300)
+sys.exit(0)

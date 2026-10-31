@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="2140" viewBox="0 0 1200 2140" font-family="Helvetica, Arial, sans-serif">
+  <title>agy-bridge: how the plugin works with Claude Code and how to connect it</title>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+    <marker id="arrg" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0f766e"/></marker>
+  </defs>
+  <rect width="1200" height="2140" fill="#f8fafc"/>
+  <text x="600" y="62" text-anchor="middle" font-size="38" font-weight="700" fill="#0f172a">agy-bridge + Claude Code</text>
+  <text x="600" y="98" text-anchor="middle" font-size="20" fill="#475569">One bounded, read-only task goes to Google's Antigravity CLI (agy). A text answer comes back.</text>
+
+  <!-- Step 1: connect -->
+  <rect x="40" y="130" width="1120" height="250" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <circle cx="82" cy="172" r="22" fill="#2563eb"/><text x="82" y="180" text-anchor="middle" font-size="24" font-weight="700" fill="#fff">1</text>
+  <text x="116" y="181" font-size="26" font-weight="700" fill="#0f172a">Connect it to Claude Code</text>
+
+  <rect x="70" y="208" width="320" height="140" rx="10" fill="#0f172a"/>
+  <text x="86" y="236" font-size="14" fill="#94a3b8">terminal</text>
+  <text x="86" y="266" font-size="17" font-family="Menlo, Consolas, monospace" fill="#e2e8f0">git clone &lt;repo-url&gt;</text>
+  <text x="86" y="296" font-size="17" font-family="Menlo, Consolas, monospace" fill="#e2e8f0">claude --plugin-dir \</text>
+  <text x="86" y="322" font-size="17" font-family="Menlo, Consolas, monospace" fill="#e2e8f0">  /path/to/agy-bridge</text>
+  <line x1="395" y1="278" x2="445" y2="278" stroke="#475569" stroke-width="3" marker-end="url(#arr)"/>
+
+  <rect x="450" y="208" width="320" height="140" rx="10" fill="#0f172a"/>
+  <text x="466" y="236" font-size="14" fill="#94a3b8">inside Claude Code</text>
+  <text x="466" y="270" font-size="17" font-family="Menlo, Consolas, monospace" fill="#e2e8f0">/agy:doctor --offline</text>
+  <text x="466" y="302" font-size="17" font-family="Menlo, Consolas, monospace" fill="#e2e8f0">/agy:dry-run  ...</text>
+  <text x="466" y="334" font-size="15" fill="#94a3b8">checks agy, sends nothing</text>
+  <line x1="775" y1="278" x2="825" y2="278" stroke="#475569" stroke-width="3" marker-end="url(#arr)"/>
+
+  <rect x="830" y="208" width="300" height="140" rx="10" fill="#0f172a"/>
+  <text x="846" y="236" font-size="14" fill="#94a3b8">when the manifest looks right</text>
+  <text x="846" y="272" font-size="17" font-family="Menlo, Consolas, monospace" fill="#e2e8f0">/agy:delegate</text>
+  <text x="846" y="300" font-size="15" fill="#94a3b8">also /agy:queue and</text>
+  <text x="846" y="322" font-size="15" fill="#94a3b8">/agy:status (see step 5)</text>
+  <text x="600" y="370" text-anchor="middle" font-size="15" fill="#475569">Needs Python 3 (standard library only) and the agy CLI installed and signed in. No hooks; the queue watcher runs only when you start it.</text>
+
+  <!-- Step 2: flow -->
+  <rect x="40" y="410" width="1120" height="470" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <circle cx="82" cy="452" r="22" fill="#2563eb"/><text x="82" y="460" text-anchor="middle" font-size="24" font-weight="700" fill="#fff">2</text>
+  <text x="116" y="461" font-size="26" font-weight="700" fill="#0f172a">What happens when you delegate</text>
+
+  <rect x="70" y="500" width="200" height="120" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+  <text x="170" y="535" text-anchor="middle" font-size="20" font-weight="700" fill="#1e3a8a">Claude Code</text>
+  <text x="170" y="562" text-anchor="middle" font-size="15" fill="#1e3a8a">you or Claude run</text>
+  <text x="170" y="584" text-anchor="middle" font-size="15" font-family="Menlo, Consolas, monospace" fill="#1e3a8a">/agy:delegate</text>
+  <text x="170" y="606" text-anchor="middle" font-size="14" fill="#1e3a8a">task + file list</text>
+
+  <line x1="275" y1="560" x2="325" y2="560" stroke="#475569" stroke-width="3" marker-end="url(#arr)"/>
+
+  <rect x="330" y="480" width="520" height="340" rx="12" fill="#f0fdfa" stroke="#0f766e" stroke-width="2"/>
+  <text x="590" y="512" text-anchor="middle" font-size="20" font-weight="700" fill="#134e4a">bin/agy-bridge (local script)</text>
+  <g font-size="16" fill="#134e4a">
+    <rect x="352" y="530" width="476" height="44" rx="8" fill="#ccfbf1"/><text x="372" y="558"><tspan font-weight="700">a</tspan>  checks --repo and denylist; lists FILES NOT SENT</text>
+    <rect x="352" y="584" width="476" height="44" rx="8" fill="#ccfbf1"/><text x="372" y="612"><tspan font-weight="700">b</tspan>  scans files for key-shaped strings, refuses on a hit</text>
+    <rect x="352" y="638" width="476" height="44" rx="8" fill="#ccfbf1"/><text x="372" y="666"><tspan font-weight="700">c</tspan>  copies ONLY the named files to a temp folder</text>
+    <rect x="352" y="692" width="476" height="44" rx="8" fill="#ccfbf1"/><text x="372" y="720"><tspan font-weight="700">d</tspan>  starts agy: 5 env vars, limits, event log</text>
+    <rect x="352" y="746" width="476" height="44" rx="8" fill="#ccfbf1"/><text x="372" y="774"><tspan font-weight="700">e</tspan>  answer "untrusted"; --cite checks quotes</text>
+  </g>
+
+  <line x1="855" y1="560" x2="905" y2="560" stroke="#0f766e" stroke-width="3" marker-end="url(#arrg)"/>
+  <rect x="910" y="500" width="220" height="120" rx="12" fill="#fefce8" stroke="#ca8a04" stroke-width="2"/>
+  <text x="1020" y="535" text-anchor="middle" font-size="20" font-weight="700" fill="#713f12">agy (Google)</text>
+  <text x="1020" y="562" text-anchor="middle" font-size="15" fill="#713f12">reads the temp folder</text>
+  <text x="1020" y="584" text-anchor="middle" font-size="15" fill="#713f12">read-only, no writes</text>
+  <text x="1020" y="606" text-anchor="middle" font-size="14" fill="#713f12">files + task leave your machine</text>
+
+  <path d="M1020 625 L1020 700 L855 700" fill="none" stroke="#ca8a04" stroke-width="3" marker-end="url(#arr)"/>
+  <text x="1030" y="672" font-size="15" fill="#713f12">text answer</text>
+  <path d="M330 740 L300 740 L300 650 L170 650 L170 625" fill="none" stroke="#475569" stroke-width="3" stroke-dasharray="8 6" marker-end="url(#arr)"/>
+  <text x="76" y="676" font-size="15" fill="#475569">answer shown in chat;</text>
+  <text x="76" y="696" font-size="15" fill="#475569">Claude checks it first</text>
+
+  <rect x="70" y="840" width="1060" height="28" rx="6" fill="#fef2f2"/>
+  <text x="600" y="860" text-anchor="middle" font-size="16" fill="#991b1b">The scan and denylist reduce accidents, they do not catch every secret. Run dry-run and read the manifest first.</text>
+
+  <!-- Step 3: use -->
+  <rect x="40" y="900" width="1120" height="240" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <circle cx="82" cy="942" r="22" fill="#2563eb"/><text x="82" y="950" text-anchor="middle" font-size="24" font-weight="700" fill="#fff">3</text>
+  <text x="116" y="951" font-size="26" font-weight="700" fill="#0f172a">Use it like this</text>
+  <rect x="70" y="974" width="1060" height="56" rx="10" fill="#0f172a"/>
+  <text x="90" y="1009" font-size="18" font-family="Menlo, Consolas, monospace" fill="#e2e8f0">/agy:delegate review these changed files for missing tests  src/a.py src/b.py</text>
+  <g font-size="16" fill="#334155">
+    <text x="76" y="1068"><tspan font-weight="700" fill="#0f766e">Good for:</tspan> big read-heavy input, a first-pass review, a broad search, summaries of many files.</text>
+    <text x="76" y="1096"><tspan font-weight="700" fill="#b91c1c">Not for:</tspan> edits, secrets, anything you would not send to a third party.</text>
+    <text x="76" y="1124"><tspan font-weight="700" fill="#334155">Rule:</tspan> the answer is a lead, not a fact. Verify it before you act on it.</text>
+  </g>
+
+  <!-- Step 4: checks after the run -->
+  <rect x="40" y="1160" width="1120" height="290" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <circle cx="82" cy="1202" r="22" fill="#2563eb"/><text x="82" y="1210" text-anchor="middle" font-size="24" font-weight="700" fill="#fff">4</text>
+  <text x="116" y="1211" font-size="26" font-weight="700" fill="#0f172a">Check what was sent and what came back</text>
+  <rect x="70" y="1236" width="500" height="92" rx="10" fill="#0f172a"/>
+  <text x="86" y="1262" font-size="14" fill="#94a3b8">ask for verbatim quotes</text>
+  <text x="86" y="1290" font-size="16" font-family="Menlo, Consolas, monospace" fill="#e2e8f0">delegate ... --cite --require-verified</text>
+  <text x="86" y="1314" font-size="14" fill="#94a3b8">every FILE | QUOTE | CLAIM line is VERIFIED or UNVERIFIED</text>
+  <rect x="600" y="1236" width="530" height="92" rx="10" fill="#0f172a"/>
+  <text x="616" y="1262" font-size="14" fill="#94a3b8">read the event log (terminal, no slash command)</text>
+  <text x="616" y="1290" font-size="16" font-family="Menlo, Consolas, monospace" fill="#e2e8f0">bin/agy-bridge events --tail 10</text>
+  <text x="616" y="1314" font-size="14" fill="#94a3b8">files + sha256, not sent, seconds, exit code</text>
+  <g font-size="16" fill="#334155">
+    <text x="76" y="1362"><tspan font-weight="700" fill="#0f766e">Header of every answer:</tspan> files sent, FILES NOT SENT (rule and line number, never the matched text).</text>
+    <text x="76" y="1392"><tspan font-weight="700" fill="#b45309">Exit codes:</tspan> 4 refused by a rule, 10 quota, 12 timeout, 15 permission denied, 17 unverified quote.</text>
+    <text x="76" y="1422"><tspan font-weight="700" fill="#334155">Options:</tspan> --model, --timeout, --max-bytes, --out, --allow-fragment-file (narrow, never a real key).</text>
+  </g>
+
+  <!-- Step 5: built-in queue -->
+  <rect x="40" y="1480" width="1120" height="290" rx="16" fill="#ffffff" stroke="#7c3aed" stroke-width="2"/>
+  <circle cx="82" cy="1522" r="22" fill="#7c3aed"/><text x="82" y="1530" text-anchor="middle" font-size="24" font-weight="700" fill="#fff">5</text>
+  <text x="116" y="1531" font-size="26" font-weight="700" fill="#0f172a">Job queue: add jobs, let the watcher run them</text>
+  <g font-size="15" text-anchor="middle">
+    <rect x="70" y="1558" width="230" height="110" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"/>
+    <text x="185" y="1586" font-weight="700" fill="#4c1d95" font-size="17">queue add job.json</text>
+    <text x="185" y="1610" fill="#4c1d95">name, model, task, files,</text>
+    <text x="185" y="1631" fill="#4c1d95">timeout, cite, context</text>
+    <text x="185" y="1652" fill="#4c1d95" font-size="13">.agy-bridge/queue/*.job</text>
+    <line x1="305" y1="1612" x2="345" y2="1612" stroke="#475569" stroke-width="3" marker-end="url(#arr)"/>
+    <rect x="350" y="1558" width="270" height="110" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"/>
+    <text x="485" y="1586" font-weight="700" fill="#4c1d95" font-size="17">queue watch / run</text>
+    <text x="485" y="1610" fill="#4c1d95">your context_files first,</text>
+    <text x="485" y="1631" fill="#4c1d95">retries quota, one NEED: round,</text>
+    <text x="485" y="1652" fill="#4c1d95" font-size="13">one watcher, a bad job never blocks</text>
+    <line x1="625" y1="1612" x2="665" y2="1612" stroke="#475569" stroke-width="3" marker-end="url(#arr)"/>
+    <rect x="670" y="1558" width="200" height="110" rx="10" fill="#f0fdfa" stroke="#0f766e" stroke-width="2"/>
+    <text x="770" y="1586" font-weight="700" fill="#134e4a" font-size="17">same as delegate</text>
+    <text x="770" y="1610" fill="#134e4a">same checks and rules</text>
+    <text x="770" y="1631" fill="#134e4a">(steps 2 and 4 above)</text>
+    <text x="770" y="1652" fill="#134e4a" font-size="13">then agy at Google</text>
+    <line x1="875" y1="1612" x2="915" y2="1612" stroke="#475569" stroke-width="3" marker-end="url(#arr)"/>
+    <rect x="920" y="1558" width="210" height="110" rx="10" fill="#fefce8" stroke="#ca8a04" stroke-width="2"/>
+    <text x="1025" y="1586" font-weight="700" fill="#713f12" font-size="17">results/NAME.md</text>
+    <text x="1025" y="1610" fill="#713f12">header: UNVERIFIED output,</text>
+    <text x="1025" y="1631" fill="#713f12">sent / not sent, seconds</text>
+    <text x="1025" y="1652" fill="#713f12" font-size="13">job moves to done/ or failed/</text>
+  </g>
+  <text x="76" y="1706" font-size="15" fill="#334155"><tspan font-weight="700" fill="#7c3aed">See it:</tspan> agy-bridge status shows the watcher, pending, done, failed, stuck jobs and results with no verdict yet.</text>
+  <text x="76" y="1736" font-size="15" fill="#334155"><tspan font-weight="700" fill="#7c3aed">Then:</tspan> agy-bridge verdict records pass, fixes or reject for a result; agy-bridge verdicts lists them.</text>
+
+  <!-- Step 6: checking model output -->
+  <rect x="40" y="1800" width="1120" height="290" rx="16" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <circle cx="82" cy="1842" r="22" fill="#2563eb"/><text x="82" y="1850" text-anchor="middle" font-size="24" font-weight="700" fill="#fff">6</text>
+  <text x="116" y="1851" font-size="26" font-weight="700" fill="#0f172a">Measure model code before you trust it</text>
+  <rect x="70" y="1876" width="500" height="92" rx="10" fill="#0f172a"/>
+  <text x="86" y="1902" font-size="14" fill="#94a3b8">does a diff apply and pass your tests?</text>
+  <text x="86" y="1930" font-size="16" font-family="Menlo, Consolas, monospace" fill="#e2e8f0">agy-bridge apply-diff result.md --case case.json</text>
+  <text x="86" y="1954" font-size="14" fill="#94a3b8">limited to the solution files named in the case</text>
+  <rect x="600" y="1876" width="530" height="92" rx="10" fill="#0f172a"/>
+  <text x="616" y="1902" font-size="14" fill="#94a3b8">do your tests catch the wrong solutions it proposed?</text>
+  <text x="616" y="1930" font-size="16" font-family="Menlo, Consolas, monospace" fill="#e2e8f0">agy-bridge grade-mutants result.md --case case.json</text>
+  <text x="616" y="1954" font-size="14" fill="#94a3b8">SURVIVES = a gap in your tests, KILLED = caught</text>
+  <rect x="70" y="1990" width="1060" height="44" rx="8" fill="#fef2f2"/>
+  <text x="600" y="2018" text-anchor="middle" font-size="16" fill="#991b1b">Model-written code runs only in an OS sandbox (no network, no writes outside scratch); no sandbox means it refuses, unless --unsafe-no-sandbox.</text>
+  <text x="76" y="2066" font-size="15" fill="#334155"><tspan font-weight="700" fill="#0f766e">Also:</tspan> agy-bridge stats (seconds vs size per model, a safe size for your target time).</text>
+
+  <text x="600" y="2118" text-anchor="middle" font-size="13" fill="#94a3b8">agy-bridge · MIT · docs/THREAT_MODEL.md</text>
+</svg>

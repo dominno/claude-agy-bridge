@@ -1,0 +1,17 @@
+{
+  "name": "agy",
+  "version": "0.1.0",
+  "description": "Bounded read-only agy delegation, a built-in job queue and explicit local result checks. No hooks or automatic background work.",
+  "author": {
+    "name": "Dominik Szopa"
+  },
+  "homepage": "https://github.com/dominno/claude-agy-bridge",
+  "repository": "https://github.com/dominno/claude-agy-bridge",
+  "license": "MIT",
+  "keywords": [
+    "antigravity",
+    "agy",
+    "delegation",
+    "read-only"
+  ]
+}
