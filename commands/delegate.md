@@ -1,7 +1,7 @@
 ---
 description: Hand one bounded, read-only task to the Antigravity CLI (agy) and read back a text answer
 argument-hint: <task> [files or globs to include]
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge:*)
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge delegate *) Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge dry-run *) Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge events *)
 ---
 
 Delegate one task to agy through the bridge script. The script, not this prompt, enforces the safety rules.
@@ -27,7 +27,7 @@ Steps:
 
 The selected file contents are sent to Google through agy. Say so to the user if they have not seen the manifest.
 
-Note: `allowed-tools` only pre-approves running the bridge script with any arguments, so no permission prompt appears. It is not a restriction. The limits (the `--repo` folder checks, the `--out` locations, the denylist and the content scan) are enforced inside the script.
+Note: `allowed-tools` only pre-approves the listed bridge subcommands, so no permission prompt appears. It is not a restriction. The limits (the `--repo` folder checks, the `--out` locations, the denylist and the content scan) are enforced inside the script.
 
 Optional checks:
 - Add `--cite` to request `FILE: <path> | QUOTE: "<verbatim text, max 25 words>" | CLAIM: <text>` lines.

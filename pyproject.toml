@@ -1,7 +1,7 @@
 [project]
 name = "agy-bridge"
 version = "0.1.0"
-description = "Hand one bounded, read-only task to the Antigravity CLI (agy) from Claude Code."
+description = "Delegate read-only tasks and isolated coding jobs to the Antigravity CLI from Claude Code."
 requires-python = ">=3.9"
 license = { text = "MIT" }
 dependencies = []

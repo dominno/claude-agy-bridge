@@ -7,8 +7,8 @@
     {
       "name": "agy",
       "source": "./",
-      "description": "Hand one bounded, read-only task to the Antigravity CLI (agy)."
+      "description": "Delegate read-only tasks and isolated coding jobs to the Antigravity CLI (agy)."
     }
   ],
-  "description": "agy-bridge: bounded, read-only delegation to the Antigravity CLI."
+  "description": "agy-bridge: bounded delegation and isolated coding jobs with the Antigravity CLI."
 }

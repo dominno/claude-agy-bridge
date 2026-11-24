@@ -1,8 +1,8 @@
 # agy-bridge
 
-A small Claude Code plugin that hands one bounded, read-only task to Google's Antigravity CLI (`agy`) and returns the
-text answer. Use it to offload big, read-heavy work to another model while keeping what leaves your machine small,
-explicit and auditable. Safety rules are enforced by a local script (Python standard library only), not by a prompt.
+A small Claude Code plugin for Google Antigravity CLI (`agy`). Use `delegate` for bounded, read-only work. Use
+`implement` for editing an isolated snapshot, running a configured check, and reviewing a patch. A local script
+using the Python standard library enforces the bridge rules.
 
 Not affiliated with or endorsed by Google or Anthropic.
 
@@ -17,14 +17,12 @@ the `unshare` fallback has not been exercised on a real Linux host.
 
 ## When to use it
 
-**Good for:** a first-pass review of many files, a broad search, summaries of large read-heavy input.
-
-**Not for:** edits, quick questions, secrets, or anything you would not send to a third party. The answer is a lead, not
-a fact: verify it before you act on it.
+Use `delegate` for a first-pass review, broad search or summary of large inputs. Use `implement` for changes to approved
+project files. Review the files that can be sent, the resulting patch, and the check outcome before acting on the result.
 
 ## Requirements
 
-- macOS or Linux. Windows is untested.
+- macOS or Linux for read-only delegation. `implement` requires Linux and Bubblewrap with working unprivileged user namespaces.
 - Python 3.9 or newer. No packages are needed to run it.
 - [Claude Code](https://claude.com/claude-code), for the slash commands. The script also works on its own.
 - The Antigravity CLI, installed and signed in: follow [Google's instructions](https://antigravity.google/docs/cli-using),
@@ -70,6 +68,7 @@ bin/agy-bridge delegate --repo "$PWD" --file src/a.py --timeout 5m -- "Explain w
 | `/agy:doctor` | Read-only health check |
 | `/agy:dry-run` | Shows what a delegation would send; sends nothing |
 | `/agy:delegate` | Hands one task to `agy` and returns the answer |
+| `/agy:implement` | Edits an isolated snapshot and returns a job ID for the reviewable patch |
 | `/agy:queue` | Adds a job to the serial queue or drains it |
 | `/agy:status` | Shows the watcher, queue counts and results awaiting a verdict |
 
@@ -80,13 +79,13 @@ denylist reduce accidents; they do not detect every secret (encoded or split sec
 whether content is confidential. Run `dry-run` first and read the manifest. Do not delegate anything you would not
 send to a third party.
 
-## What it does
+## What read-only delegation does
 
 - Copies only the files you name (or glob) into a throw-away staging folder, with a short `TASK.md`.
 - Runs `agy` there, in a terminal pair, with a time limit and an output cap.
 - Returns the answer as text, labelled as untrusted.
 
-## What it never does
+## Read-only delegation boundaries
 
 - Pass `--dangerously-skip-permissions`, `--yolo` or any permission-widening flag.
 - Pass your environment on: the process `agy` starts with has exactly `HOME`, `PATH` (absolute entries only),
@@ -105,15 +104,20 @@ send to a third party.
 
 ## What the slash commands can and cannot do
 
-`allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge:*)` only pre-approves running the script with any arguments,
-so Claude Code does not ask each time. It is not a restriction. The limits are enforced in the script (the `--repo`
-checks, `--out` locations, denylist and content scan).
+`allowed-tools` pre-approves the listed bridge subcommands. The implementation slash command uses normal Claude Code
+permissions. The bridge validates repository roots, output locations, paths and file contents.
 
 What `dry-run` does: it reads and checks the files exactly like `delegate`, **writes them to a temporary folder (mode
 0700, removed before it exits)**, prints the manifest and the `agy` command line, and runs `agy --version` with the
 five-name environment in an empty folder. That is the only program a dry run starts; delegation never runs git. No file contents and no task text go to `agy`.
 
 To have a diff reviewed, pass the changed source files with `--file`.
+
+## Implement code with AGY
+
+`implement` starts a local background worker that gives AGY a private, writable snapshot. It exports the actual Git
+patch, optionally runs a configured offline check, and can resume the AGY conversation after interruption. It requires
+AGY CLI 1.5.16 or newer in major version 1. See [setup and usage](docs/IMPLEMENT.md).
 
 ## Job queue
 
@@ -157,6 +161,7 @@ that protection and runs the code with your privileges and network access. See [
 | File | Contents |
 |---|---|
 | [`docs/CLI.md`](docs/CLI.md) | All options, exit codes, repo config, input notices, `--cite` and the event journal |
+| [`docs/IMPLEMENT.md`](docs/IMPLEMENT.md) | Edit jobs, authentication, checks, resume and patch application |
 | [`docs/QUEUE.md`](docs/QUEUE.md) | Job format, folders, locking, retries |
 | [`docs/GRADING.md`](docs/GRADING.md) | Trusted case format, mutants, diffs, the sandbox, timing stats |
 | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) | Rules R1 to R9, the tests that prove them, residual risks |

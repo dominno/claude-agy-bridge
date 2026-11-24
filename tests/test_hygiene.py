@@ -8,7 +8,14 @@ import pytest
 
 from conftest import ROOT
 
-ALLOWED_TOOL = "Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge:*)"
+COMMAND_TOOLS = {
+    'delegate': ('delegate', 'dry-run', 'events'),
+    'doctor': ('doctor',),
+    'dry-run': ('dry-run', 'events'),
+    'implement': (),
+    'queue': ('queue', 'dry-run', 'status', 'verdict'),
+    'status': ('status',),
+}
 FORBIDDEN_MODULES = {"urllib", "urllib2", "urllib3", "socket", "http", "httplib", "requests", "ftplib", "smtplib",
                      "ssl", "telnetlib", "xmlrpc", "websocket", "websockets", "aiohttp", "httpx", "asyncio"}
 
@@ -107,17 +114,22 @@ def test_r3_runtime_code_never_names_a_widening_flag_except_to_forbid_it():
                 assert "--dangerously" not in node.value and "--yolo" not in node.value, path
 
 
-def test_commands_allowed_tools_are_exactly_the_one_pattern():
+def test_command_preapproval_is_scoped_to_its_subcommands():
     folder = os.path.join(ROOT, "commands")
     names = sorted(os.listdir(folder))
-    assert names == ["delegate.md", "doctor.md", "dry-run.md", "queue.md", "status.md"]
+    assert names == sorted(name + ".md" for name in COMMAND_TOOLS)
     for name in names:
         text = open(os.path.join(folder, name)).read()
         assert text.startswith("---\n")
         front = text.split("---\n")[1]
         fields = dict(line.split(": ", 1) for line in front.strip().splitlines())
         assert fields["description"].strip() and "argument-hint" in fields
-        assert fields["allowed-tools"].strip() == ALLOWED_TOOL
+        allowed = COMMAND_TOOLS[name[:-3]]
+        if allowed:
+            assert fields["allowed-tools"] == " ".join(
+                "Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge " + cmd + " *)" for cmd in allowed)
+        else:
+            assert "allowed-tools" not in fields
 
 
 def test_manifests_parse_and_have_required_fields():
@@ -192,7 +204,7 @@ def test_python_files_declare_only_stdlib_imports():
 def test_allowed_tools_is_described_as_pre_approval_not_a_restriction():
     for rel in ("README.md", "docs/THREAT_MODEL.md"):
         text = open(os.path.join(ROOT, rel)).read().lower()
-        assert "pre-approves" in text and "any arguments" in text, rel
+        assert "pre-approves" in text and "listed bridge subcommands" in text, rel
     for name in ("delegate.md", "doctor.md", "dry-run.md"):
         text = open(os.path.join(ROOT, "commands", name)).read().lower()
         assert "only pre-approves" in text and "not a restriction" in text, name
@@ -218,20 +230,20 @@ def subprocess_violations(tree):
     return bad
 
 
-def test_r9_subprocess_is_only_imported_where_agy_is_launched():
+def test_r9_subprocess_imports_are_limited_to_explicit_launchers():
     importers = set()
     for path, tree in trees():
         for node in ast.walk(tree):
             if isinstance(node, ast.Import) and any(a.name == "subprocess" for a in node.names):
                 importers.add(os.path.basename(path))
-    assert importers <= {"runner.py", "cli.py"}, importers
+    assert importers <= SUBPROCESS_MODULES, importers
 
 
-def test_r9_every_subprocess_call_starts_agy_and_none_names_git():
+def test_r9_every_subprocess_call_takes_an_explicit_argv():
     assert [(p, subprocess_violations(t)) for p, t in trees() if subprocess_violations(t)] == []
 
 
-def test_r9_only_agy_is_ever_looked_up_and_git_is_not_run():
+def test_r9_git_is_scoped_to_explicit_implementation_and_grading():
     for path, tree in trees():
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and getattr(node.func, "attr", getattr(node.func, "id", "")) in (
@@ -240,8 +252,8 @@ def test_r9_only_agy_is_ever_looked_up_and_git_is_not_run():
                 assert isinstance(first, ast.Constant) and first.value == "agy", (path, ast.dump(node)[:80])
     for path, _ in trees():
         text = open(path).read()
-        assert "diff-tree" not in text and "rev-parse" not in text, path
-        if not path.endswith("grading.py"):  # explicit scratch-only git apply, never delegate
+        if os.path.basename(path) not in GIT_MODULES:
+            assert "diff-tree" not in text and "rev-parse" not in text, path
             assert '"git"' not in text and "'git'" not in text, path
 
 
@@ -254,11 +266,12 @@ def test_r9_the_subprocess_check_catches_a_git_call():
     assert subprocess_violations(ok) == []
 
 
-SUBPROCESS_MODULES = {"runner.py", "cli.py"}
+GIT_MODULES = {"grading.py", "workspace.py", "edit_apply.py"}
+SUBPROCESS_MODULES = {"runner.py", "cli.py", "workspace.py", "edit_sandbox.py", "edit_apply.py", "implement.py"}
 
 
 def process_violations(tree, filename):
-    """Everything that could start another program, other than the two allowed agy launch sites."""
+    """Unexpected launch mechanisms or executables outside the explicit workflow modules."""
     bad = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -283,7 +296,7 @@ def process_violations(tree, filename):
                 bad.append("pty.%s" % name)
         elif isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
             text = node.value.decode("utf-8", "ignore") if isinstance(node.value, bytes) else node.value
-            if os.path.basename(text.strip()).lower() == "git" and filename != "grading.py":
+            if os.path.basename(text.strip()).lower() == "git" and filename not in GIT_MODULES:
                 bad.append("a value naming git")
     return bad
 

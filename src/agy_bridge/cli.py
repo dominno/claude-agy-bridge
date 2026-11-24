@@ -26,7 +26,7 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = _Parser(prog="agy-bridge", description="Hand one bounded, read-only task to agy.")
+    p = _Parser(prog="agy-bridge", description="Delegate read-only tasks or isolated implementation jobs to AGY.")
     p.add_argument("--version", action="version", version="agy-bridge " + __version__)
     sub = p.add_subparsers(dest="command", required=True, parser_class=_Parser)
     for name in ("delegate", "dry-run"):
@@ -103,6 +103,8 @@ def _parser() -> argparse.ArgumentParser:
     repo_options(t)
     t.add_argument('--results-dir')
     t.add_argument('--target', type=float, default=180)
+    from . import implement
+    implement.add_arguments(sub)
     return p
 
 
@@ -416,6 +418,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     install_stop_handlers()
     try:
+        if args.command == 'implement' or args.command.startswith('implement-') or args.command == '_implement-worker':
+            from . import implement
+            return implement.dispatch(args)
         if args.command in ('queue','status','verdict','verdicts','grade-mutants','apply-diff','stats'):
             return cmd_workflow(args)
         if args.command == "doctor":

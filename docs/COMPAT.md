@@ -6,9 +6,12 @@ showed. Anything not listed there stays unverified: treat it as a guess and sett
 on a throw-away account, see [MANUAL_TEST.md](MANUAL_TEST.md)).
 
 ## How the bridge copes
-- All command-line flags live in one table, `ARGV_SPECS` in `src/agy_bridge/runner.py`, keyed by the **major** version
-  reported by `agy --version`. `build_argv()` is the only place a command line is made.
-- An unknown major version fails closed: exit code 14, `agy` is not run for the task.
+- `runner.py` builds AGY arguments from the reported version and the selected workflow. From AGY 1.5.16 onward the
+  read-only runner pins session permissions. Versions 1.5.7–1.5.15 default to Auto when supported and are refused
+  because the bridge has not verified the session settings switch on those releases.
+- An unknown major version fails closed with exit code 14. The implementation workflow requires AGY 1.5.16 or above
+  within major version 1 and Linux Bubblewrap. Its authenticated edit and resume behavior stays unverified until a
+  real account and a host that supports Bubblewrap are available.
 
 ## Unverified assumptions
 | # | Assumption | Where it lives | How to settle it |

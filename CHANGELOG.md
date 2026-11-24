@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `implement` and `/agy:implement` run AGY edits in a private Linux Bubblewrap workspace. Jobs support offline checks,
+  cancellation, resuming the saved conversation, patch review and explicit application.
+- Read-only delegation pins permissions on AGY versions with verified session settings. Claude Code pre-approval is
+  limited to the subcommands used by each read-only slash command.
+
 ## 0.1.0 (2026-10-31)
 
 First public release.

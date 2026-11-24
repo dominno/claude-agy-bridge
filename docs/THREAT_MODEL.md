@@ -14,7 +14,7 @@
 - **A bug in the bridge**: a race between checking and copying, a leaked environment variable, an over-open log.
 - Out of scope: a malicious `agy` binary, a compromised Google account, a hostile local user with the same uid.
 
-## Rules, enforcement and tests
+## Rules for read-only delegation, enforcement and tests
 | Rule | What it guarantees | Where | Main tests |
 |---|---|---|---|
 | R1 | Denylisted names are never staged. The check covers every component of the path under `--repo` **and** of the `--repo` folder itself, reduced to its on-disk letter case (macOS `F_GETPATH`) and with symlinks resolved, then case-folded and NFKC-normalised. The root may not be `/`, HOME or above HOME (compared by device and inode, not by string), a system folder, or inside a hidden folder of HOME (`~/.config/...`); it must contain a real `.git` directory (a path check only; a symlink or stray `.git` file does not count; a `gitdir:` file must name a real directory inside the repo) unless `--allow-non-git-root`, which never lifts the other refusals. System folders are refused with the flag too: whole trees `/etc`, `/private`, `/var`, `/usr`, `/bin`, `/sbin`, `/dev`, `/System`, `/Library`, `/root`, `/proc`, `/sys`, `/boot` (except children of the scratch places `/tmp`, `/private/tmp`, `/var/tmp`, `/private/var/tmp` and the macOS temp folder `/var/folders`), and the folder itself for `/Volumes`, `/Users`, `/home`, `/opt`, `/mnt`, `/media`, `/tmp`; also `~/Library`. A project below `/Volumes/<disk>/` or in your home folder (not in a hidden folder) is fine. HOME is taken from `$HOME`, `~` and the password database. The denylist is name based: a secret in an innocent file name is caught only by R5 | `denylist.py`, `stage.check_root`, `stage.prepare` | `test_denylist.py` (`test_r1_*`), `test_stage.py` (`test_r1_*`), `test_integration.py` (`test_r1_*`) |
@@ -25,7 +25,7 @@
 | R6 | Symlinks (also in parent folders), hard links, `..`, outside absolute paths, pipes, devices, folders, binary and oversized files, and names differing only in case are refused; files are opened without following links and read once | `stage._read_regular`, `stage._relative` | `test_stage.py` (`test_r6_*`), `test_integration.py` (`test_r6_*`) |
 | R7 | The legacy home log holds only time, exit code, model, counts, seconds and a short task hash. The repo event journal adds sent paths/full hashes/byte counts, not-sent paths/rules, dry-run/truncation and citation counts; neither stores contents, task text or answer text. Both use 0600 files in 0700 folders | `report.write_log`, `cli` | `test_r7_*` |
 | R8 | Delegated answers are text, never executed by delegate or queue (explicit graders execute proposals under the boundary below); control codes stripped; delegate writes only to temp or `<repo>/.agy-bridge/`; queue overrides stay inside safe repo folders; `--out` never overwrites and never follows a symlink | `report.py` | `test_r8_*` |
-| R9 | (`allowed-tools` pre-approves the script with any arguments; it is not a restriction, the code-side checks are.) No hooks, no `userConfig`, no skills or agents, no network module, no `shell=True`, `eval`, `exec` or `os.system` in the plugin | repository checks | `test_r9_*` in `test_hygiene.py` |
+| R9 | (`allowed-tools` pre-approves the listed bridge subcommands; it is not a restriction, the code-side checks are.) No hooks, no `userConfig`, no skills or agents, no network module, no `shell=True`, `eval`, `exec` or `os.system` in the plugin | repository checks | `test_r9_*` in `test_hygiene.py` |
 
 ## Race handling
 The bridge reads each file once into memory (descriptor opened with `O_NOFOLLOW`, every parent folder opened the same
@@ -33,8 +33,7 @@ way), scans that buffer, and later writes that same buffer. A file changed after
 (`test_staged_bytes_are_the_scanned_bytes`).
 
 ## Residual risks (not mitigated)
-- `allowed-tools: Bash(<script>:*)` pre-approves the script with any arguments (any `--repo`, any `--out` within the
-  script's own limits). It adds no restriction; the checks live in the script.
+- `allowed-tools` pre-approves the listed bridge subcommands. The implementation command uses normal Claude Code permissions.
 - A grandchild process that keeps the pty open and ignores the kill is reported as a timeout (exit 12).
 - `agy --version` (also run by `dry-run`) executes the real `agy` binary found on the cleaned PATH, in an empty folder. `doctor --repo` applies the same inside-the-repo refusal; without `--repo` it cannot.
 - Delegate and queue never run git. Explicit local graders use the scratch process launcher in `runner.py`:
@@ -205,3 +204,12 @@ This execution surface belongs only to explicitly invoked graders. Delegate and 
 and cannot launch graders. The trusted Linux namespace setup shell quotes argv data and executes no model
 setup instructions. The bridge imports no network library; confinement is enforced by the operating system,
 not by the prompt or the clean environment. See [GRADING.md](GRADING.md) for runtime paths and case limits.
+
+## Implementation jobs
+
+Implementation is explicitly submitted with its own input manifest. The AGY process sees the writable candidate
+copy and a dedicated profile inside a required Linux Bubblewrap sandbox. It receives a fixed session policy and
+model network access. The approved test argv runs on a separate candidate copy with an isolated network. The job
+store keeps task text, selected source, test results, patches and conversation IDs private to the local user.
+Application checks the reviewed diff hash and affected file preimages, and requires the explicit apply command.
+See [implementation setup and usage](IMPLEMENT.md).

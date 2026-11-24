@@ -1,7 +1,7 @@
 ---
 description: Show exactly which files and which agy command line a delegation would use, and send nothing
 argument-hint: <task> [files or globs to include]
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge:*)
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge dry-run *) Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge events *)
 ---
 
 Request: $ARGUMENTS
@@ -11,7 +11,7 @@ and show the user the manifest (path, bytes, hash prefix) and the agy command li
 The same refusals apply as for a real delegation, so a refusal here (exit code 4) predicts a refusal there.
 Run this before the first delegation of a session and whenever the set of input files changes.
 
-Note: `allowed-tools` only pre-approves running the bridge script with any arguments, so no permission prompt appears. It is not a restriction. The limits (the `--repo` folder checks, the `--out` locations, the denylist and the content scan) are enforced inside the script.
+Note: `allowed-tools` only pre-approves the listed bridge subcommands, so no permission prompt appears. It is not a restriction. The limits (the `--repo` folder checks, the `--out` locations, the denylist and the content scan) are enforced inside the script.
 
 `--cite`, `--require-verified` (with `--cite`) and `--allow-fragment-file` are also accepted here. No citation is
 verified without an answer. Inspect every `FILES NOT SENT:` notice as well as the manifest: a glob can succeed
