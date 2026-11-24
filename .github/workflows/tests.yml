@@ -15,7 +15,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # The Python 3.9 tool cache provides an Ubuntu 24.04 build.
+          - os: ubuntu-24.04
             python-version: "3.9"
           - os: ubuntu-latest
             python-version: "3.12"
