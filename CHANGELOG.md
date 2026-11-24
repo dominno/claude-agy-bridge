@@ -1,9 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - `implement` and `/agy:implement` run AGY edits in a private Linux Bubblewrap workspace. Jobs support offline checks,
   cancellation, resuming the saved conversation, patch review and explicit application.
+- `jobs list` and `/agy:jobs` show local implementation jobs and a selected delegation queue. The CLI supports
+  filtering to live workers and returning versioned JSON for integrations.
+- `doctor --implementation --profile PATH` probes the isolated Linux worker and its AGY version.
+- Install the standalone `agy-bridge` command from a checkout with `pip`. Detached workers also run from the
+  installed package.
 - Read-only delegation pins permissions on AGY versions with verified session settings. Claude Code pre-approval is
   limited to the subcommands used by each read-only slash command.
 

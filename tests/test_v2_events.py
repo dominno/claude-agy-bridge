@@ -197,12 +197,12 @@ def test_first_create_transient_enoent_retries_the_same_safe_open(h, monkeypatch
 
 
 def test_append_failure_is_explicit_and_preserves_success_exit(h, monkeypatch, capsys):
-    from agy_bridge import cli
+    from agy_bridge import cli, delegation
     def fail_append(fd, record):
         raise events.EventError('could not append the event record')
     monkeypatch.setattr(events, 'append', fail_append)
     # Dry-run avoids subprocess setup while still exercising the full journal path.
-    monkeypatch.setattr(cli, '_argv_preview', lambda *args: 'No program was run.')
+    monkeypatch.setattr(delegation, '_argv_preview', lambda *args: 'No program was run.')
     code = cli.main(['dry-run', '--repo', str(h.repo), '--file', 'notes.md', '--', 'read'])
     assert code == 0
     assert 'could not append the event record' in capsys.readouterr().err

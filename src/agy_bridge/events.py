@@ -9,7 +9,7 @@ import stat
 import time
 from collections import deque
 
-from .report import SCRATCH_DIR
+from .config import SCRATCH_DIR
 
 
 class EventError(Exception):

@@ -1,8 +1,9 @@
 # Implement code with AGY
 
 `implement` gives Antigravity an explicit snapshot of project files. AGY can edit the private copy, and the bridge
-calculates a Git patch from the resulting files. An optional local test command runs offline on a separate copy of
-those exact bytes. Failed checks can trigger two more AGY turns in the same conversation.
+calculates a Git patch from the resulting files. The AGY session permits file edits and blocks shell tools. An optional
+check runs offline on a separate copy of the exact candidate bytes. Failed checks can trigger two more AGY turns in
+the same conversation.
 
 ## Set up the worker
 
@@ -13,12 +14,19 @@ or VM with working user namespaces if your container disables them. [Recorded co
 Create a dedicated profile outside the project and the bridge's job directory. For API-key authentication, set
 `GEMINI_API_KEY` in the invoking environment and pass `--gemini-api-key`. The bridge selects the Gemini model provider
 in that session. A dedicated profile with cached credentials usable inside Bubblewrap can also work. The sandbox
-exposes the dedicated profile without the host keyring. [AGY authentication](https://antigravity.google/docs/cli/install/).
+exposes the dedicated profile without the host keyring. [AGY authentication](https://antigravity.google/docs/install?tab=cli).
+
+From your Git project, check the isolated worker startup. This probe only runs `agy --version` inside Bubblewrap.
+It does not submit a job or check the profile's authentication.
+
+```sh
+mkdir -m 700 "$HOME/agy-implementation-profile"
+bin/agy-bridge doctor --implementation --repo "$PWD" --profile "$HOME/agy-implementation-profile"
+```
 
 ## Preview and submit
 
 ```sh
-mkdir -m 700 "$HOME/agy-implementation-profile"
 bin/agy-bridge implement --dry-run --repo "$PWD" \
   --glob 'src/**/*.py' --glob 'tests/**/*.py' --file pyproject.toml \
   --write-dir src --write-dir tests \
@@ -51,7 +59,12 @@ the actual change inventory.
 
 ## Inspect and resume
 
+List jobs to find the ID if you closed the submitting session. Add `--active` for currently running work and `--json`
+for a versioned machine-readable result. With no `--repo`, the listing covers implementation jobs for your user.
+
 ```sh
+bin/agy-bridge jobs list --active
+bin/agy-bridge jobs list --repo "$PWD" --json
 bin/agy-bridge implement-status "$job_id"
 bin/agy-bridge implement-patch "$job_id"
 bin/agy-bridge implement-cancel "$job_id"
@@ -63,15 +76,18 @@ The Linux host and worker must keep running. The defaults are 25 minutes per AGY
 Set `--turn-timeout` or `--job-timeout` at submission. The bridge can finish processing a patch after stopping AGY.
 A resume starts a fresh invocation and continues the same working copy and saved AGY conversation when available.
 Cancellation, timeout, quota exhaustion, and worker interruption retain the copy. A partial patch is available once
-the worker has validated and saved it. For API-key jobs, supply `GEMINI_API_KEY` in the resume environment as well.
+the worker has validated and saved it. `worker_active` and `cancel_requested` in `implement-status` distinguish a
+running job from an interrupted worker or a pending cancellation. For API-key jobs, supply `GEMINI_API_KEY` in the
+resume environment as well.
 
 `verified` means the configured check passed against the captured patch. `ready` means the job produced a patch without
 a configured check. `checks_failed` includes the last nonzero check result. The check uses the supplied JSON argv, a
 system or workspace-relative executable, and a separate offline Bubblewrap sandbox. Put required tools on the host
 software image and include the project inputs explicitly. CPU, memory, and disk limits depend on the host. The AGY
 sandbox allows provider network access and mounts the isolated writable profile. The private job directory under
-`~/.agy-bridge/implement/` keeps the files, patch, and available check output. Remove completed job directories when
-you no longer need their artifacts. [Full command and status reference](CLI.md#implementation-jobs).
+`~/.agy-bridge/implement/` keeps the files, patch, and state. A failed check's status may include a filtered excerpt of
+its output. Remove completed job directories when you no longer need their artifacts.
+[Full command and status reference](CLI.md#implementation-jobs).
 
 ## Apply after review
 

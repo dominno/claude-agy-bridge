@@ -13,6 +13,7 @@ COMMAND_TOOLS = {
     'doctor': ('doctor',),
     'dry-run': ('dry-run', 'events'),
     'implement': (),
+    'jobs': ('jobs list',),
     'queue': ('queue', 'dry-run', 'status', 'verdict'),
     'status': ('status',),
 }
@@ -38,7 +39,11 @@ def trees():
 def test_r9_plugin_json_has_no_hooks_and_no_user_config():
     data = json.load(open(os.path.join(ROOT, ".claude-plugin", "plugin.json")))
     assert "hooks" not in data and "userConfig" not in data
-    assert data["name"] == "agy" and data["version"] == "0.1.0"
+    from agy_bridge import __version__
+
+    assert data["name"] == "agy" and data["version"] == __version__
+    with open(os.path.join(ROOT, 'pyproject.toml')) as project:
+        assert re.search(r'^version = "([^"]+)"$', project.read(), re.M)[1] == __version__
     assert not os.path.exists(os.path.join(ROOT, "hooks"))
 
 

@@ -5,17 +5,16 @@ import os
 import re
 import stat
 import tempfile
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple
 
 from . import config
-from .config import UsageError
-from .runner import RunResult
+from .config import SCRATCH_DIR, UsageError
+
+if TYPE_CHECKING:
+    from .runner import RunResult
 
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-
-SCRATCH_DIR = ".agy-bridge"  # inside the repo; the only repo folder an answer may be written to
-
 
 def clean_answer(raw: bytes, preserve_lines: bool = False) -> str:
     text = raw.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")

@@ -230,7 +230,8 @@ environment. For another supported credential setup, see the [implementation gui
 
 ### Create a fixture and preview it
 
-Set `bridge` to the full path of this checkout's `bin/agy-bridge`, then create the fixture:
+Set `bridge` to the full path of this checkout's `bin/agy-bridge` or the command in a virtual environment where you
+installed the package. Create the fixture and run the version probe.
 
 ```sh
 bridge=/absolute/path/to/claude-agy-bridge/bin/agy-bridge
@@ -254,15 +255,16 @@ git init -q "$repo"
 git -C "$repo" add src tests
 git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm fixture
 
+"$bridge" doctor --implementation --repo "$repo" --profile "$profile"
 "$bridge" implement --dry-run --repo "$repo" \
   --file src/calc.py --file tests/test_calc.py --write-dir src \
   --check '["python3", "-m", "unittest", "discover", "-s", "tests"]' \
   -- 'Fix the wrong result in src/calc.py. Keep the test as written.'
 ```
 
-The manifest should show both files, their SHA-256 hashes, `write_dirs` with `src`, and `check_configured` set to
-`true`. The job should first record a failed baseline test. The model can read the test, while the approved patch
-scope covers `src/`.
+The doctor should report `ok` and an AGY version inside the sandbox. The preview should show both files, their SHA-256
+hashes, `write_dirs` with `src`, and `check_configured` set to `true`. The job should first record a failed baseline
+test. The model can read the test, while the approved patch scope covers `src/`.
 
 ### Run, review, and apply
 
@@ -272,12 +274,14 @@ job_id=$("$bridge" implement --repo "$repo" --profile "$profile" --gemini-api-ke
   --check '["python3", "-m", "unittest", "discover", "-s", "tests"]' \
   -- 'Fix the wrong result in src/calc.py. Keep the test as written.' \
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["job_id"])')
+"$bridge" jobs list --repo "$repo" --json
 "$bridge" implement-status "$job_id"
 ```
 
-Repeat `implement-status` until the job reaches a terminal phase. Expect `verified`, `baseline_check_exit: 1`, and
-`check_exit: 0`. A sandbox startup refusal means this host cannot run the acceptance test. Record the error with
-the host and Bubblewrap versions. A failed final check or no changes is a failed acceptance run.
+The inventory should include an `implement` row with the submitted ID. Repeat `implement-status` until the job reaches
+a terminal phase. Expect `verified`, a `baseline_check_exit` of `1`, and a `check_exit` of `0`. A sandbox startup
+refusal means this host cannot run the acceptance test. Record the error with the host and Bubblewrap versions.
+A failed final check or no changes is a failed acceptance run.
 
 ```sh
 git -C "$repo" diff --exit-code
@@ -304,9 +308,10 @@ change for `src/calc.py`. The test source should match the original commit.
 ### Test pause and continuation on a longer task
 
 Use a second disposable fixture with a multi-file refactor and explicit acceptance tests. Submit it with enough
-time to observe an active turn, close Claude Code if used, and inspect the local worker with `implement-status`.
-When it has a `conversation_id` and an active phase, run `implement-cancel <job-id>`, wait for `canceled`, then
-run `implement-resume <job-id>`. Keep the credential available in the resume environment. Confirm the same job
-and conversation resume, the fixture remains unchanged until you apply, and the final candidate passes the checks.
-Record version, model, host, elapsed time, phases, changes, and check outcomes. Record which stages ran on a real
-account and which used the offline fake. Omit credentials and unrelated file content from shared notes.
+time to observe an active turn, close Claude Code if used, and recover the ID from `jobs list --active --repo <root>`.
+Use `implement-status` to confirm the live worker and its `conversation_id`. Run `implement-cancel <job-id>`, wait
+for `canceled`, and confirm the job now appears only in the unfiltered inventory. Run `implement-resume <job-id>`
+with the credential available in its environment. Confirm the same job and conversation resume, the fixture remains
+unchanged until you apply, and the final candidate passes the checks. Record version, model, host, elapsed time,
+phases, changes, and check outcomes. Record which stages ran on a real account and which used the offline fake.
+Omit credentials and unrelated file content from shared notes.

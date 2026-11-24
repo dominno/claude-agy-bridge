@@ -13,17 +13,26 @@ import sys
 import time
 
 from . import config, sandbox, stage
+from .edit_runtime import GUEST_DEV, GUEST_PROC, GUEST_PROFILE, GUEST_TMP, execution_deadline
 
 
 GUEST_TREE = '/workspace'
-GUEST_PROFILE = '/home/agy'
 GUEST_AGY = '/opt/agy/bin/agy'
 SYSTEM_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 TEST_OUTPUT_TAIL = 8192
+PREFLIGHT_TIMEOUT_S = 15
 
 
 class Unavailable(config.UsageError):
     """A required OS isolation feature is unavailable."""
+
+
+class DeadlineExceeded(config.UsageError):
+    """The job deadline elapsed during the sandbox preflight."""
+
+
+class CleanupError(Unavailable):
+    """The sandbox process remained after the bounded teardown wait."""
 
 
 def _unavailable(detail):
@@ -113,13 +122,13 @@ def _bwrap_args(network):
     if tool is None:
         raise _unavailable('Bubblewrap was not found in /usr/bin or /bin')
     argv = [tool, '--unshare-all', '--unshare-user', '--disable-userns', '--die-with-parent',
-            '--new-session', '--cap-drop', 'ALL', '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp']
+            '--new-session', '--cap-drop', 'ALL', '--proc', GUEST_PROC, '--dev', GUEST_DEV, '--tmpfs', GUEST_TMP]
     if network:
         argv.insert(2, '--share-net')
     else:
         argv += ['--clearenv']
     for name, value in {'HOME': GUEST_PROFILE, 'PATH': SYSTEM_PATH, 'LANG': 'C.UTF-8', 'TERM': 'dumb',
-                        'USER': 'agy', 'LOGNAME': 'agy', 'TMPDIR': '/tmp'}.items():
+                        'USER': 'agy', 'LOGNAME': 'agy', 'TMPDIR': GUEST_TMP}.items():
         argv += ['--setenv', name, value]
     for directory in ('/lib', '/lib64', '/lib32', '/usr/lib', '/usr/lib64', '/usr/lib32', '/usr/libexec'):
         if os.path.isdir(directory):
@@ -171,56 +180,74 @@ def _terminate(proc):
     try:
         proc.wait(timeout=2)
     except subprocess.TimeoutExpired:
-        raise _unavailable('Bubblewrap did not exit after cancellation') from None
+        raise CleanupError('implementation sandbox did not exit after SIGKILL and the cleanup deadline') from None
 
 
-def _run(argv, tree, env, timeout_s, should_cancel):
-    with subprocess.Popen(argv, cwd=tree, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, start_new_session=True, close_fds=True) as proc:
-        deadline = time.monotonic() + timeout_s
-        tail = bytearray()
+def _run(argv, tree, env, timeout_s, should_cancel, deadline=None):
+    started = time.monotonic()
+    end = execution_deadline(started, timeout_s, deadline)
+    if should_cancel is not None and should_cancel():
+        return 130, 'cancelled'
+    if time.monotonic() >= end:
+        return 124, 'execution deadline reached before launch'
+    # Popen's context manager performs an unbounded wait on a normal exception.
+    # Close the stream explicitly, even when a killed process cannot be reaped.
+    proc = subprocess.Popen(argv, cwd=tree, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+    tail = bytearray()
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(proc.stdout, selectors.EVENT_READ)
+            while selector.get_map() or proc.poll() is None:
+                if should_cancel is not None and should_cancel():
+                    return 130, 'cancelled'
+                remaining = end - time.monotonic()
+                if remaining <= 0:
+                    return 124, 'timeout after %ss' % round(end - started, 3)
+                for key, _ in selector.select(min(remaining, 0.1)):
+                    data = os.read(key.fd, 65536)
+                    if not data:
+                        selector.unregister(key.fileobj)
+                        continue
+                    tail.extend(data)
+                    if len(tail) > TEST_OUTPUT_TAIL:
+                        del tail[:-TEST_OUTPUT_TAIL]
+        return proc.returncode, tail.decode('utf-8', 'replace')
+    finally:
         try:
-            with selectors.DefaultSelector() as selector:
-                selector.register(proc.stdout, selectors.EVENT_READ)
-                while selector.get_map() or proc.poll() is None:
-                    if should_cancel is not None and should_cancel():
-                        return 130, 'cancelled'
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        return 124, 'timeout after %ss' % timeout_s
-                    for key, _ in selector.select(min(remaining, 0.1)):
-                        data = os.read(key.fd, 65536)
-                        if not data:
-                            selector.unregister(key.fileobj)
-                            continue
-                        tail.extend(data)
-                        if len(tail) > TEST_OUTPUT_TAIL:
-                            del tail[:-TEST_OUTPUT_TAIL]
-            return proc.returncode, tail.decode('utf-8', 'replace')
-        finally:
             _terminate(proc)
+        finally:
+            proc.stdout.close()
 
 
-def preflight(*, tree, profile, exe, should_cancel=None):
-    """Probe the exact AGY mount and namespace before a prompt can be sent."""
+def preflight(*, tree, profile, exe, should_cancel=None, deadline=None):
+    """Probe AGY under the smaller of the local startup limit and the job deadline."""
+    started = time.monotonic()
+    end = execution_deadline(started, PREFLIGHT_TIMEOUT_S, deadline)
+    job_limited = deadline is not None and deadline <= started + PREFLIGHT_TIMEOUT_S
+    if job_limited and time.monotonic() >= end:
+        raise DeadlineExceeded('job deadline reached before the AGY version probe')
     command = agent_command([exe, '--version'], tree=tree, profile=profile)
     try:
-        code, detail = _run(command, tree, {}, 15, should_cancel)
+        code, detail = _run(command, tree, {}, PREFLIGHT_TIMEOUT_S, should_cancel, end)
     except OSError as exc:
         raise _unavailable('could not start Bubblewrap: %s' % exc.strerror) from None
+    if code == 124 and job_limited:
+        raise DeadlineExceeded('job deadline reached during the AGY version probe')
     if code:
         raise _unavailable('AGY version probe returned %s (%s)' % (code, detail.strip()[-300:]))
     return detail
 
 
-def run_test(argv, *, tree, timeout_s, should_cancel=None):
+def run_test(argv, *, tree, timeout_s, should_cancel=None, deadline=None):
     """Run one trusted argv in a writable disposable test tree, offline."""
+    end = execution_deadline(time.monotonic(), timeout_s, deadline)
     tree = _private_directory(tree, 'test workspace')
     if not argv:
         raise config.UsageError('test command is empty')
     if argv[0].startswith('/') and Path(argv[0]).parent not in map(Path, SYSTEM_PATH.split(':')):
         raise config.UsageError('use a system test executable or a workspace-relative path')
     try:
-        return _run(_test_command(argv, tree), tree, {}, timeout_s, should_cancel)
+        return _run(_test_command(argv, tree), tree, {}, timeout_s, should_cancel, end)
     except OSError as exc:
         raise _unavailable('could not start Bubblewrap: %s' % exc.strerror) from None

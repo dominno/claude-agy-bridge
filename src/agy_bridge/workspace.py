@@ -19,7 +19,7 @@ EDIT_DENY = ('.agents', 'AGENTS.md', 'GEMINI.md', '.mcp.json', '.agy-bridge.json
 MAX_FILE_BYTES = 1024 * 1024
 MAX_TREE_BYTES = 8 * 1024 * 1024
 MAX_DIFF_BYTES = 20 * 1024 * 1024
-_DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 _FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
@@ -28,7 +28,7 @@ class Error(config.UsageError):
 
 
 @dataclass(frozen=True)
-class _File:
+class WorkspaceFile:
     data: bytes
     executable: bool
 
@@ -44,7 +44,7 @@ class Snapshot:
     base_commit: str | None
     extra_deny: tuple
     not_sent: tuple
-    _files: dict[str, _File]
+    _files: dict[str, WorkspaceFile]
 
     @property
     def manifest(self):
@@ -64,7 +64,7 @@ class Workspace:
 class Changes:
     paths: tuple[tuple[str, str], ...]
     diff: bytes
-    _files: dict[str, _File]
+    _files: dict[str, WorkspaceFile]
 
 
 def _valid_path(rel, extra):
@@ -77,7 +77,7 @@ def _valid_path(rel, extra):
         raise Error('workspace path is denied: ' + stage.printable(rel))
 
 
-def _read_file(parent, name, rel):
+def read_workspace_file(parent, name, rel):
     before = os.stat(name, dir_fd=parent, follow_symlinks=False)
     if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
         raise Error('workspace path is not a single-link regular file: ' + stage.printable(rel))
@@ -93,7 +93,7 @@ def _read_file(parent, name, rel):
         raise Error('workspace file exceeds its size limit: ' + stage.printable(rel))
     if (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
         raise Error('workspace file changed while being read: ' + stage.printable(rel))
-    return _File(data, bool(opened.st_mode & stat.S_IXUSR))
+    return WorkspaceFile(data, bool(opened.st_mode & stat.S_IXUSR))
 
 
 def git_env(home):
@@ -114,7 +114,7 @@ def git_executable():
     raise Error('Git is required for an implementation workspace')
 
 
-def _git(args, cwd, env, data=b'', check=True):
+def run_git(args, cwd, env, data=b'', check=True):
     argv = [git_executable(), *args]
     try:
         result = subprocess.run(argv, cwd=cwd, env=env, input=data, capture_output=True, timeout=15)
@@ -125,10 +125,10 @@ def _git(args, cwd, env, data=b'', check=True):
     return result
 
 
-def _base_commit(root):
+def source_commit(root):
     with tempfile.TemporaryDirectory(prefix='agy-edit-git-home-') as home:
         env = dict(git_env(home), GIT_CEILING_DIRECTORIES=os.path.dirname(root))
-        result = _git(['rev-parse', '--verify', 'HEAD'], root, env, check=False)
+        result = run_git(['rev-parse', '--verify', 'HEAD'], root, env, check=False)
     value = result.stdout.strip()
     if result.returncode == 0 and re.fullmatch(rb'[0-9a-f]{40}|[0-9a-f]{64}', value):
         return value.decode('ascii')
@@ -141,27 +141,20 @@ def prepare(repo, files, globs, task):
     root = stage.resolve_repo(repo)
     stage.check_root(root)
     extra = tuple(config.load_extra_deny(root)) + EDIT_DENY
-    commit = _base_commit(root)
-    root, prepared = stage.prepare(repo, files, globs, task, MAX_FILE_BYTES, MAX_TREE_BYTES, extra)
+    commit = source_commit(root)
+    root, prepared = stage.prepare(repo, files, globs, task, MAX_FILE_BYTES, MAX_TREE_BYTES, extra,
+                                   include_modes=True)
     captured = {}
     normalized = {}
-    try:
-        for entry in prepared.entries:
-            rel = _record_path(entry.rel, extra, normalized)
-            parent, name = os.path.split(rel)
-            with safety.directory(os.path.join(root, parent)) as fd:
-                value = _read_file(fd, name, rel)
-            if value.data != entry.data:
-                raise Error('source changed during workspace preparation: ' + stage.printable(rel))
-            captured[rel] = value
-    except OSError as exc:
-        raise Error('source changed or could not be opened during workspace preparation') from exc
-    if _base_commit(root) != commit:
+    for entry in prepared.entries:
+        rel = record_path(entry.rel, extra, normalized)
+        captured[rel] = WorkspaceFile(entry.data, entry.executable)
+    if source_commit(root) != commit:
         raise Error('source Git HEAD changed during workspace preparation')
     return Snapshot(root, task, commit, extra, tuple(prepared.not_sent), captured)
 
 
-def _record_path(rel, extra, seen):
+def record_path(rel, extra, seen):
     _valid_path(rel, extra)
     raw = rel.split('/')
     folded = tuple(denylist._components(rel))
@@ -215,15 +208,15 @@ def _capture_tree(base, extra):
                 if count > stage._WALK_LIMIT:
                     raise Error('workspace has too many directory entries')
                 rel = '/'.join((*prefix, entry.name))
-                _record_path(rel, extra, seen)
+                record_path(rel, extra, seen)
                 if entry.is_dir(follow_symlinks=False):
-                    child = os.open(entry.name, _DIRECTORY_FLAGS, dir_fd=parent)
+                    child = os.open(entry.name, DIRECTORY_FLAGS, dir_fd=parent)
                     try:
                         walk(child, (*prefix, entry.name), depth + 1)
                     finally:
                         os.close(child)
                     continue
-                value = _read_file(parent, entry.name, rel)
+                value = read_workspace_file(parent, entry.name, rel)
                 refusal = stage._check_text(rel, value.data)
                 if refusal:
                     raise Error(stage.describe(refusal[0]))
@@ -253,13 +246,13 @@ def copy_candidate(workspace, dest, changes=None):
     return dest
 
 
-def _tree_object(scratch, label, files, env):
+def git_tree(scratch, label, files, env):
     indexed_env = dict(env, GIT_INDEX_FILE=os.fspath(scratch / (label + '.index')))
     if files:
         _write_tree(scratch / label, files, readonly=True)
         names = sorted(files)
         paths = ''.join(label + '/' + name + '\n' for name in names).encode('utf-8')
-        hashes = _git(['hash-object', '-w', '--no-filters', '--stdin-paths'],
+        hashes = run_git(['hash-object', '-w', '--no-filters', '--stdin-paths'],
                       scratch, indexed_env, paths).stdout.splitlines()
         if len(hashes) != len(names) or any(not re.fullmatch(rb'[0-9a-f]{40}|[0-9a-f]{64}', h) for h in hashes):
             raise Error('Git returned an invalid workspace object list')
@@ -267,11 +260,23 @@ def _tree_object(scratch, label, files, env):
         for name, object_id in zip(names, hashes):
             mode = b'100755' if files[name].executable else b'100644'
             records.extend(mode + b' ' + object_id + b'\t' + name.encode('utf-8') + b'\0')
-        _git(['update-index', '-z', '--index-info'], scratch, indexed_env, bytes(records))
-    tree = _git(['write-tree'], scratch, indexed_env).stdout.strip()
+        run_git(['update-index', '-z', '--index-info'], scratch, indexed_env, bytes(records))
+    tree = run_git(['write-tree'], scratch, indexed_env).stdout.strip()
     if not re.fullmatch(rb'[0-9a-f]{40}|[0-9a-f]{64}', tree):
         raise Error('Git returned an invalid workspace tree ID')
     return tree.decode('ascii')
+
+
+def change_inventory(before, after):
+    changes = {}
+    for rel in sorted(before.keys() | after.keys()):
+        if rel not in before:
+            changes[rel] = 'added'
+        elif rel not in after:
+            changes[rel] = 'deleted'
+        elif before[rel] != after[rel]:
+            changes[rel] = 'modified'
+    return changes
 
 
 def export_diff(workspace):
@@ -280,26 +285,19 @@ def export_diff(workspace):
     if manifest != workspace.manifest:
         raise Error('workspace baseline no longer matches the approved snapshot')
     candidate = _capture_tree(workspace.tree, workspace.extra_deny)
-    paths = []
-    for rel in sorted(baseline.keys() | candidate.keys()):
-        if rel not in baseline:
-            paths.append(('added', rel))
-        elif rel not in candidate:
-            paths.append(('deleted', rel))
-        elif baseline[rel] != candidate[rel]:
-            paths.append(('modified', rel))
+    paths = tuple((kind, rel) for rel, kind in change_inventory(baseline, candidate).items())
     if not paths:
         return Changes((), b'', candidate)
 
     with tempfile.TemporaryDirectory(prefix='agy-edit-diff-', dir=workspace.baseline.parent) as temporary:
         scratch = Path(temporary)
         env = git_env(scratch)
-        _git(['init', '--quiet', '--template='], scratch, env)
-        old = _tree_object(scratch, 'before', baseline, env)
-        new = _tree_object(scratch, 'after', candidate, env)
-        patch = _git(['diff-tree', '-r', '-p', '--no-color', '--no-commit-id', '--no-ext-diff', '--no-textconv',
+        run_git(['init', '--quiet', '--template='], scratch, env)
+        old = git_tree(scratch, 'before', baseline, env)
+        new = git_tree(scratch, 'after', candidate, env)
+        patch = run_git(['diff-tree', '-r', '-p', '--no-color', '--no-commit-id', '--no-ext-diff', '--no-textconv',
                       '--no-renames', '--no-relative', '--full-index', '--src-prefix=a/', '--dst-prefix=b/', old, new],
                      scratch, env).stdout
     if not patch or len(patch) > MAX_DIFF_BYTES:
         raise Error('workspace diff is missing or exceeds its size limit')
-    return Changes(tuple(paths), patch, candidate)
+    return Changes(paths, patch, candidate)

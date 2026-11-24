@@ -1,6 +1,6 @@
 ---
 description: Read-only health check for the agy bridge (agy on PATH, version, log file mode)
-argument-hint: [--offline]
+argument-hint: [--offline] or [--implementation --profile PATH]
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge doctor *)
 ---
 
@@ -8,5 +8,8 @@ Run `${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge doctor --repo <absolute path of the cu
 Use `--offline` to skip the one check that needs network and sign-in. The check changes nothing outside
 `~/.agy-bridge/` and the temp folder. Do not try to fix a failure by installing or signing in on the user's behalf;
 tell them what failed.
+
+Use `--implementation --profile PATH` to check whether AGY can start in the Linux implementation sandbox. This
+probe runs `agy --version` in an empty workspace and creates no job.
 
 Note: `allowed-tools` only pre-approves the listed bridge subcommands, so no permission prompt appears. It is not a restriction. The limits (the `--repo` folder checks, the `--out` locations, the denylist and the content scan) are enforced inside the script.

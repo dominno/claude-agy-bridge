@@ -39,6 +39,7 @@ INLINE_ANSWER_CHARS = 8000
 PREVIEW_CHARS = 2000
 
 REPO_CONFIG_NAME = ".agy-bridge.json"
+SCRATCH_DIR = ".agy-bridge"
 _REPO_CONFIG_MAX_BYTES = 64 * 1024
 
 
@@ -88,15 +89,20 @@ def build_agy_env(repo_root: Optional[str] = None) -> dict:
 
 
 _DURATION = re.compile(r"^(\d+)\s*([smh]?)$")
+_ASCII_DURATION = re.compile(_DURATION.pattern, re.ASCII)
 
 
-def parse_duration(text: str) -> int:
-    match = _DURATION.match(text.strip().lower())
+def parse_duration(text: str, *, max_seconds: int = MAX_TIMEOUT_S, label: str = 'timeout',
+                   ascii_lowercase_only: bool = False) -> int:
+    value = text.strip()
+    match = _ASCII_DURATION.fullmatch(value) if ascii_lowercase_only else _DURATION.fullmatch(value.lower())
     if not match:
-        raise UsageError("timeout must look like 90, 90s, 5m or 1h")
+        examples = '90s, 30m or 2h' if label == 'job timeout' else '90, 90s, 5m or 1h'
+        raise UsageError(f'{label} must look like {examples}')
     seconds = int(match.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600}[match.group(2)]
-    if seconds < 1 or seconds > MAX_TIMEOUT_S:
-        raise UsageError("timeout must be between 1 second and 1 hour")
+    if not 1 <= seconds <= max_seconds:
+        maximum = {3600: '1 hour', 24 * 3600: '24 hours'}.get(max_seconds, f'{max_seconds} seconds')
+        raise UsageError(f'{label} must be between 1 second and {maximum}')
     return seconds
 
 

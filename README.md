@@ -6,7 +6,7 @@ using the Python standard library enforces the bridge rules.
 
 Not affiliated with or endorsed by Google or Anthropic.
 
-**Status: v0.1, early.** The test suite uses a fake `agy`. The bridge has been run once against the real `agy` 1.4.3
+**Version 0.2.0.** The test suite uses a fake `agy`. The bridge has been run once against the real `agy` 1.4.3
 (2026-10-20, fake files only): doctor, dry-run and delegate work, and writes, commands, reads outside the folder and
 network use were not possible headless without a permission. That is one version on one machine, not a guarantee; see
 [`docs/COMPAT.md`](docs/COMPAT.md) for what was measured and what stays unverified. A basic delegation also worked on
@@ -41,6 +41,9 @@ Install the plugin in Claude Code:
 /plugin install agy@agy-bridge
 ```
 
+If you already have the plugin, update it with `claude plugin update agy@agy-bridge`, then reload plugins or start a
+new Claude Code session.
+
 Or try it for one session only, without installing anything:
 
 ```sh
@@ -66,12 +69,16 @@ bin/agy-bridge dry-run  --repo "$PWD" --file src/a.py -- "Explain what a.py does
 bin/agy-bridge delegate --repo "$PWD" --file src/a.py --timeout 5m -- "Explain what a.py does"
 ```
 
+To install the standalone command from a checkout, run `python3 -m pip install /path/to/claude-agy-bridge` in an
+active virtual environment. Use `agy-bridge` or `python3 -m agy_bridge` in place of `bin/agy-bridge`.
+
 | Slash command | What it does |
 |---|---|
 | `/agy:doctor` | Read-only health check |
 | `/agy:dry-run` | Shows what a delegation would send; sends nothing |
 | `/agy:delegate` | Hands one task to `agy` and returns the answer |
 | `/agy:implement` | Starts an edit job in an isolated snapshot and returns its job ID |
+| `/agy:jobs` | Lists local implementation jobs and a selected delegation queue |
 | `/agy:queue` | Adds a job to the serial queue or drains it |
 | `/agy:status` | Shows the watcher, queue counts and results awaiting a verdict |
 
@@ -122,10 +129,23 @@ bin/agy-bridge implement --dry-run --repo "$PWD" \
   -- 'Fix the parser bug and run the regression tests.'
 ```
 
-Review the manifest, then submit without `--dry-run` and supply `--profile` as shown in the setup guide. The job ID opens
-`implement-status`, `implement-patch`, `implement-cancel`, and `implement-resume`. The worker can continue after you
+Review the manifest, then submit without `--dry-run` and supply `--profile` as shown in the setup guide. Use the job ID
+with `implement-status`, `implement-patch`, `implement-cancel`, or `implement-resume`. The worker can continue after you
 close Claude Code while the Linux host stays running. After reviewing the patch, `implement-apply` requires its exact
 SHA-256. [Set up credentials and run the full workflow](docs/IMPLEMENT.md).
+
+## Find a background job
+
+Use `/agy:jobs` in Claude Code or run one of these commands locally.
+
+```sh
+bin/agy-bridge jobs list --active
+bin/agy-bridge jobs list --repo "$PWD" --json
+```
+
+Without `--repo`, the list covers implementation jobs for the current user. With `--repo`, it shows that project's
+implementation jobs and one delegation queue. Use `--queue-dir` with `--repo` to select a custom queue.
+[Job inventory and JSON format](docs/CLI.md#job-inventory).
 
 ## Job queue
 

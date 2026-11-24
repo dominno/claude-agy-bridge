@@ -32,7 +32,7 @@ def _inventory(manifest, changes, extra):
     snapshot = {}
     normalized = {}
     for entry in manifest:
-        rel = workspace._record_path(entry['path'], extra, normalized)
+        rel = workspace.record_path(entry['path'], extra, normalized)
         if (rel in snapshot or type(entry['bytes']) is not int or
                 not 0 <= entry['bytes'] <= workspace.MAX_FILE_BYTES or
                 not isinstance(entry['sha256'], str) or
@@ -43,7 +43,7 @@ def _inventory(manifest, changes, extra):
 
     expected = {}
     for kind, rel in changes:
-        workspace._record_path(rel, extra, normalized)
+        workspace.record_path(rel, extra, normalized)
         if (rel in expected or kind not in ('added', 'modified', 'deleted') or
                 (rel in snapshot) == (kind == 'added')):
             raise ApplyError('invalid reviewed change inventory')
@@ -67,7 +67,7 @@ def _parent(root_fd, rel, created=None):
                     pass
                 else:
                     created.append('/'.join(opened))
-            child = os.open(part, workspace._DIRECTORY_FLAGS, dir_fd=fd)
+            child = os.open(part, workspace.DIRECTORY_FLAGS, dir_fd=fd)
             os.close(fd)
             fd = child
         yield fd
@@ -82,7 +82,7 @@ def _preimage(root_fd, rel, approved):
             info = os.stat(name, dir_fd=fd, follow_symlinks=False)
             if approved is None:
                 raise ApplyError('added path already exists: ' + stage.printable(rel))
-            file = workspace._read_file(fd, name, rel)
+            file = workspace.read_workspace_file(fd, name, rel)
     except FileNotFoundError as exc:
         if approved is None:
             return None
@@ -96,14 +96,14 @@ def _blobs(scratch, env, entries):
     if not entries:
         return {}
     request = b''.join(oid + b'\n' for _, oid in entries.values())
-    sizes = workspace._git(['cat-file', '--batch-check=%(objectsize)'], scratch, env, request).stdout.splitlines()
+    sizes = workspace.run_git(['cat-file', '--batch-check=%(objectsize)'], scratch, env, request).stdout.splitlines()
     if len(sizes) != len(entries) or any(not value.isdigit() for value in sizes):
         raise ApplyError('Git returned invalid blob sizes')
     lengths = [int(value) for value in sizes]
     if any(n > workspace.MAX_FILE_BYTES for n in lengths) or sum(lengths) > workspace.MAX_TREE_BYTES:
         raise ApplyError('patch output exceeds the approved workspace limits')
 
-    data = workspace._git(['cat-file', '--batch'], scratch, env, request).stdout
+    data = workspace.run_git(['cat-file', '--batch'], scratch, env, request).stdout
     files = {}
     cursor = 0
     for (rel, (executable, oid)), length in zip(entries.items(), lengths):
@@ -117,7 +117,7 @@ def _blobs(scratch, env, entries):
         refusal = stage._check_text(rel, data[start:end])
         if refusal:
             raise ApplyError(stage.describe(refusal[0]))
-        files[rel] = workspace._File(data[start:end], executable)
+        files[rel] = workspace.WorkspaceFile(data[start:end], executable)
         cursor = end + 1
     if cursor != len(data):
         raise ApplyError('Git returned unexpected data after the patch blobs')
@@ -125,14 +125,14 @@ def _blobs(scratch, env, entries):
 
 
 def _review_patch(scratch, env, before, expected, patch):
-    workspace._git(['init', '-q', '--template='], scratch, env)
-    workspace._tree_object(scratch, 'approved', before, env)
+    workspace.run_git(['init', '-q', '--template='], scratch, env)
+    workspace.git_tree(scratch, 'approved', before, env)
     index_env = dict(env, GIT_INDEX_FILE=os.fspath(scratch / 'approved.index'))
     args = ['apply', '--cached', '-p1', '--whitespace=nowarn']
-    workspace._git([*args, '--check'], scratch, index_env, patch)
-    workspace._git(args, scratch, index_env, patch)
-    next_tree = workspace._git(['write-tree'], scratch, index_env).stdout.strip().decode('ascii')
-    listing = workspace._git(['ls-tree', '-rz', next_tree], scratch, index_env).stdout
+    workspace.run_git([*args, '--check'], scratch, index_env, patch)
+    workspace.run_git(args, scratch, index_env, patch)
+    next_tree = workspace.run_git(['write-tree'], scratch, index_env).stdout.strip().decode('ascii')
+    listing = workspace.run_git(['ls-tree', '-rz', next_tree], scratch, index_env).stdout
     entries = {}
     for row in listing.split(b'\0')[:-1]:
         metadata, _, encoded_name = row.partition(b'\t')
@@ -143,15 +143,7 @@ def _review_patch(scratch, env, before, expected, patch):
             raise ApplyError('patch attempts to update an unapproved path or file type')
         entries[rel] = (mode == b'100755', oid)
     after = _blobs(scratch, env, entries)
-    actual = {}
-    for rel in before.keys() | after.keys():
-        if rel not in before:
-            actual[rel] = 'added'
-        elif rel not in after:
-            actual[rel] = 'deleted'
-        elif before[rel] != after[rel]:
-            actual[rel] = 'modified'
-    if actual != expected:
+    if workspace.change_inventory(before, after) != expected:
         raise ApplyError('patch does not match the reviewed change inventory')
     return after
 
@@ -266,14 +258,14 @@ def apply(root, base_commit, manifest, changes, patch):
                 raise ApplyError('another bridge apply is already in progress') from exc
             extra = (*workspace.EDIT_DENY, *config.load_extra_deny(root))
             snapshot, expected = _inventory(manifest, changes, extra)
-            if workspace._base_commit(root) != base_commit:
+            if workspace.source_commit(root) != base_commit:
                 raise ApplyError('source Git HEAD changed after the review')
             originals = {rel: _preimage(root_fd, rel, snapshot.get(rel)) for rel in expected}
             before = {rel: item[0] for rel, item in originals.items() if item is not None}
             with tempfile.TemporaryDirectory(prefix='agy-approved-patch-') as directory:
                 scratch = Path(directory)
                 after = _review_patch(scratch, workspace.git_env(scratch), before, expected, patch)
-            if workspace._base_commit(root) != base_commit:
+            if workspace.source_commit(root) != base_commit:
                 raise ApplyError('source Git HEAD changed during apply')
             _publish(root_fd, snapshot, expected, originals, after)
     except ApplyError:

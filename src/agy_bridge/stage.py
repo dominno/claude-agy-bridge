@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
-from . import config, runner
+from . import config
 from .config import UsageError
 from .denylist import is_denied
 from .scan import EXAMPLE_FRAGMENTS, first_hit_line, scan_bytes
@@ -52,6 +52,7 @@ class Entry:
     rel: str
     data: bytes
     sha256: str
+    executable: bool = False
 
 
 @dataclass
@@ -338,6 +339,10 @@ def _expand_glob(root, pattern: str, extra: Sequence[str], deadline=None, not_se
 # ---------- step 3: read once, safely ----------
 
 def _read_regular(root: str, rel: str, limit: int) -> bytes:
+    return read_regular_file(root, rel, limit, verify_stable=False)[0]
+
+
+def read_regular_file(root, rel: str, limit: int, *, verify_stable: bool = True) -> Tuple[bytes, int]:
     """Open component by component without following symlinks; read at most limit+1 bytes."""
     parts = rel.split("/")
     fds: List[int] = []
@@ -357,11 +362,14 @@ def _read_regular(root: str, rel: str, limit: int) -> bytes:
             raise Refused([Refusal("R6", "symlink", rel)])
         if not stat.S_ISREG(st.st_mode):
             raise Refused([Refusal("R6", "not a regular file (folder, pipe or device)", rel)])
+        before = st
         fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
         fds.append(fd)
         st = os.fstat(fd)  # re-check on the opened object
         if not stat.S_ISREG(st.st_mode):
             raise Refused([Refusal("R6", "not a regular file (folder, pipe or device)", rel)])
+        if verify_stable and not os.path.samestat(before, st):
+            raise Refused([Refusal("R6", "file changed while being opened", rel)])
         if st.st_nlink > 1:
             raise Refused([Refusal("R6", "file has several hard links", rel)])
         if st.st_size > limit:
@@ -375,7 +383,11 @@ def _read_regular(root: str, rel: str, limit: int) -> bytes:
             if total > limit:
                 raise Refused([Refusal("R6", "file is over the size limit", rel)])
             chunks.append(chunk)
-        return b"".join(chunks)
+        if verify_stable:
+            after = os.fstat(fd)
+            if (st.st_size, st.st_mtime_ns, st.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                raise Refused([Refusal("R6", "file changed while being read", rel)])
+        return b"".join(chunks), st.st_mode
     except FileNotFoundError:
         raise UsageError("file not found: %s" % printable(rel))
     except OSError:
@@ -436,7 +448,8 @@ def load_allow_fragments(root_fd, roots, path, extra_deny):
 def prepare(repo: str, files: Sequence[str], globs: Sequence[str], task: str,
             max_file_bytes: int = config.MAX_FILE_BYTES, max_bytes: int = config.MAX_TOTAL_BYTES,
             extra_deny: Sequence[str] = (), allow_non_git: bool = False,
-            allow_fragment_file: Optional[str] = None, audit: Optional[Prepared] = None) -> Tuple[str, Prepared]:
+            allow_fragment_file: Optional[str] = None, audit: Optional[Prepared] = None,
+            *, include_modes: bool = False) -> Tuple[str, Prepared]:
     deadline = time.monotonic() + _PREPARATION_SECONDS
     root = resolve_repo(repo)
     try:
@@ -450,7 +463,7 @@ def prepare(repo: str, files: Sequence[str], globs: Sequence[str], task: str,
         if (identity.st_dev, identity.st_ino) != (current.st_dev, current.st_ino):
             raise Refused([Refusal("R6", "repository folder changed during validation", "the --repo folder")])
         return _prepare_pinned(root, root_fd, repo, files, globs, task, max_file_bytes,
-                               max_bytes, extra_deny, deadline, allow_fragment_file, audit)
+                               max_bytes, extra_deny, deadline, allow_fragment_file, audit, include_modes)
     except OSError:
         raise Refused([Refusal("R6", "repository folder changed during validation", "the --repo folder")])
     finally:
@@ -458,7 +471,7 @@ def prepare(repo: str, files: Sequence[str], globs: Sequence[str], task: str,
 
 
 def _prepare_pinned(root, root_fd, repo, files, globs, task, max_file_bytes,
-                    max_bytes, extra_deny, deadline, allow_fragment_file=None, audit=None):
+                    max_bytes, extra_deny, deadline, allow_fragment_file=None, audit=None, include_modes=False):
     try:
         task.encode("utf-8")
     except UnicodeEncodeError:
@@ -533,7 +546,10 @@ def _prepare_pinned(root, root_fd, repo, files, globs, task, max_file_bytes,
             refusals.append(Refusal("R1", "path is on the denylist", rel))
             continue
         try:
-            data = _read_regular(root_fd, rel, max_file_bytes)
+            if include_modes:
+                data, mode = read_regular_file(root_fd, rel, max_file_bytes)
+            else:
+                data, mode = _read_regular(root_fd, rel, max_file_bytes), 0
         except Refused as exc:
             refusals.extend(exc.refusals)
             continue
@@ -548,7 +564,7 @@ def _prepare_pinned(root, root_fd, repo, files, globs, task, max_file_bytes,
         bad = _check_text(rel, data, allowed)
         refusals.extend(bad)
         if not bad:
-            prepared.entries.append(Entry(rel, data, hashlib.sha256(data).hexdigest()))
+            prepared.entries.append(Entry(rel, data, hashlib.sha256(data).hexdigest(), bool(mode & stat.S_IXUSR)))
     if refusals:
         prepared.not_sent.extend(r for r in refusals if r.where in prepared.requested)
         raise Refused(refusals)

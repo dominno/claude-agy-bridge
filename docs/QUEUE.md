@@ -13,7 +13,14 @@ bin/agy-bridge queue run --repo /path/to/repo
 bin/agy-bridge queue watch --repo /path/to/repo --poll 5
 bin/agy-bridge queue status --repo /path/to/repo --threshold 300
 bin/agy-bridge status --repo /path/to/repo
+bin/agy-bridge jobs list --repo /path/to/repo --active
 ```
+
+`jobs list --repo ROOT` shows job IDs and phases for the default queue under `ROOT` alongside implementation jobs for
+that project. Pass `--queue-dir PATH` to inspect a different queue or `--json` for the machine-readable inventory.
+`--active` shows the delegation currently being processed. A watcher waiting for work has no active job.
+`queue status` and `status` still show the watcher, queue counts, and results awaiting a verdict.
+[Job inventory and JSON format](CLI.md#job-inventory).
 
 `add -` accepts JSON on stdin. `add` validates a job and writes it exclusively; existing names in pending,
 archive or results are refused. Producers can also place complete `.job` JSON files into the queue, named

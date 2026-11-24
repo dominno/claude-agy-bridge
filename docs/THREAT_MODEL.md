@@ -213,3 +213,8 @@ model network access. The approved test argv runs on a separate candidate copy w
 store keeps task text, selected source, test results, patches and conversation IDs private to the local user.
 Application checks the reviewed diff hash and affected file preimages, and requires the explicit apply command.
 See [implementation setup and usage](IMPLEMENT.md).
+
+`jobs list` projects job metadata from the current user's implementation store and, when selected, one repository
+queue. It checks existing worker locks without creating them. The listing excludes task text, AGY profiles, check
+arguments and output, conversation IDs, and patch contents. An unreadable job produces a warning alongside the
+other entries. Cancellation targets the observed run ID, so a request for a previous run cannot cancel its replacement.

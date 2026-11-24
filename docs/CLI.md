@@ -6,11 +6,39 @@ bin/agy-bridge delegate --repo <root> --file <path>... [--glob <pattern>...] [--
                         [--cite [--require-verified]] [--allow-fragment-file <path>] -- "<task>"
 bin/agy-bridge dry-run  (same arguments; prints the manifest and the agy command, sends nothing)
 bin/agy-bridge doctor   [--repo <root>] [--offline]
+bin/agy-bridge doctor --implementation --profile <absolute path> [--repo <root>]
 bin/agy-bridge events   [--repo <root>] [--tail N]
 ```
 
-Queue commands are in [QUEUE.md](QUEUE.md); `verdict`, `verdicts`, `grade-mutants`, `apply-diff` and `stats` are in
-[GRADING.md](GRADING.md). `bin/agy-bridge <command> --help` lists every option.
+Queue commands are in [QUEUE.md](QUEUE.md). See [GRADING.md](GRADING.md) for `verdict`, `verdicts`, `grade-mutants`,
+`apply-diff` and `stats`. `bin/agy-bridge <command> --help` lists the options. If you installed the package, replace
+`bin/agy-bridge` with `agy-bridge` or `python3 -m agy_bridge`.
+
+## Job inventory
+
+```text
+agy-bridge jobs list [--active] [--repo ROOT] [--queue-dir PATH] [--json]
+```
+
+`jobs list` reads existing local metadata without starting AGY, creating storage, or opening queued delegation prompts.
+It lists all implementation jobs for the current user by default. `--repo` filters implementation jobs to that Git
+project and includes the project's `.agy-bridge/queue`. Pass `--queue-dir` with `--repo` to inspect one custom queue
+under the project.
+
+`--active` selects jobs with a live worker. It includes implementation jobs in `queued`, `running`, `checking`, or
+`cancel_requested` while their worker holds the lock, and the current job of a running delegation queue. Pending queue
+entries and an idle watcher do not count as active jobs. For a worker that exits before recording a result, the phase
+is `interrupted` and the job is inactive.
+
+With `--json`, stdout contains a single JSON object with `schema_version`, `jobs`, and `warnings`. The current schema
+version is `1`. Each job includes `kind` (`implement` or `delegate`), `job_id`, `repository`, `phase`, `active`, and
+`cancel_requested`. The `queue_dir`, `created_at`, `updated_at`, `started_at`, `last_agy_activity_at`, `attempt`, and
+`bridge_exit` fields are `null` when unavailable. Timestamps are Unix seconds. Jobs with live workers appear first,
+then by most recently updated. Warnings describe entries the inventory could not read safely.
+
+An empty inventory is successful. The text output shows `No jobs.` or `No active jobs.` and sends warnings to stderr.
+Use `implement-status <job-id>` for detailed implementation state. `status` and `queue status` retain their queue
+report format. [Queue commands](QUEUE.md).
 
 ## Implementation jobs
 
@@ -33,6 +61,10 @@ absolute `--profile` path to a dedicated directory with mode `0700`. `--gemini-a
 existing environment variable `GEMINI_API_KEY`. The option is saved with the job. Supply `GEMINI_API_KEY` in the
 environment again when resuming that job.
 
+Use `doctor --implementation --profile <absolute path>` to check whether Bubblewrap can run the required AGY
+version with that profile. The probe runs `agy --version` in a temporary workspace and does not create a job or
+check authentication. Pass `--repo <root>` to keep executable discovery outside the selected project.
+
 By default, the permitted output paths are the files already in the snapshot. When you supply `--write-dir`, edits
 and new files must be under one of its paths. Use `--write-dir .` for the whole snapshot and its new files. `--check`
 accepts a JSON array such as `'["python3", "-m", "unittest", "discover", "-s", "tests"]'`. The worker runs this
@@ -43,7 +75,7 @@ invocation. Resume starts a new invocation of the same job. [Setup and examples]
 | Command or phase | Output and meaning |
 |---|---|
 | `implement`, `implement-resume` | Background start returns a JSON job ID and `queued`. `--foreground` waits and returns the worker exit code. |
-| `implement-status` | JSON phase, Git base, attempt, available timestamps, recorded check exit codes, change list, and patch hash. |
+| `implement-status` | JSON phase, `worker_active`, `cancel_requested`, Git base, attempt, available timestamps, recorded check exit codes, change list, and patch hash. |
 | `implement-cancel` | Requests cancellation for the current invocation and returns `cancel_requested`. Check status for the outcome. |
 | `implement-patch` | Writes the saved unified diff to stdout after checking its hash. Partial patches can be inspected once saved. |
 | `ready`, `verified` | A patch is available for review. `verified` also records a successful configured check. |

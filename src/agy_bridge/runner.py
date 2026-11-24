@@ -15,6 +15,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from . import config, sandbox
+from .edit_runtime import GUEST_PRIVATE_PATHS, MIN_AGY_VERSION, execution_deadline
 from typing import Callable, Dict, List, Optional, Tuple
 
 PROMPT = ("Read TASK.md in the current directory and do what it says. Use only the files in this "
@@ -31,6 +32,14 @@ class UnsupportedAgy(Exception):
 
 class AgyNotRun(UnsupportedAgy):
     """agy was found but could not be started, so no program ran."""
+
+
+class EditCleanupError(config.UsageError):
+    """The isolated editing process could not be confirmed stopped."""
+
+
+class _ProbeCancelled(Exception):
+    pass
 
 
 @dataclass(frozen=True)
@@ -52,18 +61,14 @@ FORBIDDEN_FRAGMENTS = ("skip-permission", "yolo", "dangerous", "bypass", "auto-a
 # Auto became the headless default for eligible users in 1.5.7. Require a
 # verified way to pin session settings before delegating to those versions.
 _AUTO_DEFAULT_VERSION = (1, 5, 7)
-_SESSION_SETTINGS_VERSION = (1, 5, 16)
 _BLOCKED_TOOLS = ("command", "unsandboxed", "read_url", "execute_url", "mcp")
-# Absolute AGY file permission rules cover descendants of a directory. These
-# paths name mounts inside the independent editing sandbox.
-_EDIT_PRIVATE_PATHS = ("/home/agy/", "/proc/", "/dev/", "/etc/", "/sys/", "/tmp/")
 _CONVERSATION_ID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 
 
 def _session_settings(edit: bool, api_key_auth: bool = False) -> str:
     denied = [action + "(*)" for action in _BLOCKED_TOOLS]
     if edit:
-        denied.extend(action + "(" + path + ")" for path in _EDIT_PRIVATE_PATHS
+        denied.extend(action + "(" + path + ")" for path in GUEST_PRIVATE_PATHS
                       for action in ("read_file", "write_file"))
     else:
         denied.append("write_file(*)")
@@ -100,13 +105,26 @@ def find_agy(keep_out_of: Optional[str] = None) -> str:
     return exe
 
 
-def run_probe(argv, env, cwd, timeout):
+def run_probe(argv, env, cwd, timeout, *, should_cancel=None):
     """Short agy probe with bounded execution and reaping, without pipe drains."""
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         proc = subprocess.Popen(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
                                 stdout=out, stderr=err, start_new_session=True)
         try:
-            proc.wait(timeout=timeout)
+            if should_cancel is None:
+                proc.wait(timeout=timeout)
+            else:
+                end = time.monotonic() + timeout
+                while proc.poll() is None:
+                    if should_cancel():
+                        raise _ProbeCancelled
+                    remaining = end - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(argv, timeout)
+                    try:
+                        proc.wait(timeout=min(remaining, 0.1))
+                    except subprocess.TimeoutExpired:
+                        continue
         finally:
             _kill_group(proc.pid, signal.SIGKILL)
             try:
@@ -141,19 +159,28 @@ def build_argv(version: Tuple[int, int, int], exe: str, model: Optional[str]) ->
             raise UnsupportedAgy("this agy version has no known model flag")
         argv += [spec.model_flag, model]
     argv += list(spec.fixed)
-    if version >= _SESSION_SETTINGS_VERSION:
+    if version >= MIN_AGY_VERSION:
         argv += ["--settings", _session_settings(edit=False), "--disable-slash-commands"]
     elif version >= _AUTO_DEFAULT_VERSION:
-        raise UnsupportedAgy("this agy defaults to Auto; update to 1.5.16+ for pinned read-only settings")
+        raise UnsupportedAgy("this agy defaults to Auto; update to %s+ for pinned read-only settings" % _edit_version_label())
     for token in argv[1:]:
         if any(frag in token.lower() for frag in FORBIDDEN_FRAGMENTS):
             raise UnsupportedAgy("refusing to build a command line with a permission-widening flag")
     return argv
 
 
+def _edit_version_label():
+    return ".".join(map(str, MIN_AGY_VERSION))
+
+
+def require_edit_version(version):
+    if version[0] != MIN_AGY_VERSION[0] or version < MIN_AGY_VERSION:
+        raise UnsupportedAgy("editing requires AGY %s or later in major version %d" %
+                             (_edit_version_label(), MIN_AGY_VERSION[0]))
+
+
 def build_edit_argv(version, exe, model, conversation_id, prompt, timeout_s, api_key_auth=False):
-    if version[0] not in ARGV_SPECS or version < _SESSION_SETTINGS_VERSION:
-        raise UnsupportedAgy("editing requires agy 1.5.16 or later in major version 1")
+    require_edit_version(version)
     if conversation_id is not None and not valid_conversation_id(conversation_id):
         raise config.UsageError("invalid saved AGY conversation ID")
     model = config.validate_model(model)
@@ -428,36 +455,58 @@ def _edit_error(stream, returncode, timed_out, truncated, cancelled, malformed, 
     return None if stream.status == "SUCCESS" else "agy_failed"
 
 
+def _before_edit_launch(conversation_id, started, error_kind):
+    return EditRunResult(conversation_id, "ERROR", "", None, error_kind == "timeout", False,
+                         error_kind == "cancelled", _markers(b""), time.monotonic() - started, error_kind, None)
+
+
 def run_edit_agy(
         exe: str, cwd: str, env: Dict[str, str], model: Optional[str],
         timeout_s: float, conversation_id: Optional[str], prompt: str,
         on_conversation: Optional[Callable[[str], None]] = None, *,
-        max_out: int = config.MAX_OUT_BYTES, wrap=None, should_cancel=None,
+        wrap, max_out: int = config.MAX_OUT_BYTES, should_cancel=None,
         on_activity: Optional[Callable[[], None]] = None,
-        version: Optional[Tuple[int, int, int]] = None) -> EditRunResult:
-    """Run one coding turn through bounded, separately drained stdout and stderr."""
-    if not math.isfinite(timeout_s) or timeout_s <= 0 or max_out < 1:
-        raise config.UsageError("editing requires positive timeout and output limits")
-    if version is None:
-        if wrap is None:
-            version = detect_version(exe, env)
-        else:
-            probe = run_probe(wrap([exe, "--version"]), env, cwd, timeout=20)
-            if probe.returncode:
-                raise UnsupportedAgy("isolated 'agy --version' failed")
-            version = parse_version((probe.stdout + probe.stderr).decode("utf-8", "replace"))
-    argv = build_edit_argv(version, exe, model, conversation_id, prompt, timeout_s,
-                           api_key_auth="GEMINI_API_KEY" in env)
-    if wrap is not None:
-        argv = wrap(argv)
-    stream = _EditStream(conversation_id, on_conversation)
+        version: Optional[Tuple[int, int, int]] = None, deadline=None) -> EditRunResult:
+    """Run one isolated coding turn under a relative limit and an optional job deadline."""
     started = time.monotonic()
-    deadline = started + timeout_s
+    deadline = execution_deadline(started, timeout_s, deadline)
+    if not callable(wrap) or max_out < 1:
+        raise config.UsageError("editing requires an isolation wrapper and a positive output limit")
+    if should_cancel is not None and should_cancel():
+        return _before_edit_launch(conversation_id, started, "cancelled")
+    if time.monotonic() >= deadline:
+        return _before_edit_launch(conversation_id, started, "timeout")
+    if version is None:
+        probe_argv = wrap([exe, "--version"])
+        probe_budget = min(20, deadline - time.monotonic())
+        if probe_budget <= 0:
+            return _before_edit_launch(conversation_id, started, "timeout")
+        try:
+            probe = run_probe(probe_argv, env, cwd, timeout=probe_budget, should_cancel=should_cancel)
+        except _ProbeCancelled:
+            return _before_edit_launch(conversation_id, started, "cancelled")
+        except subprocess.TimeoutExpired:
+            if probe_budget < 20 or time.monotonic() >= deadline:
+                return _before_edit_launch(conversation_id, started, "timeout")
+            raise UnsupportedAgy("isolated 'agy --version' did not finish in time") from None
+        if probe.returncode:
+            raise UnsupportedAgy("isolated 'agy --version' failed")
+        version = parse_version((probe.stdout + probe.stderr).decode("utf-8", "replace"))
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return _before_edit_launch(conversation_id, started, "timeout")
+    argv = wrap(build_edit_argv(version, exe, model, conversation_id, prompt, remaining,
+                               api_key_auth="GEMINI_API_KEY" in env))
+    if should_cancel is not None and should_cancel():
+        return _before_edit_launch(conversation_id, started, "cancelled")
+    if time.monotonic() >= deadline:
+        return _before_edit_launch(conversation_id, started, "timeout")
+    stream = _EditStream(conversation_id, on_conversation)
     err_markers = _markers(b"")
     agy_error = None
     timed_out = truncated = cancelled = malformed = False
     proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, close_fds=True)
     stdout, stderr = proc.stdout.fileno(), proc.stderr.fileno()
     pending = {stdout: b"", stderr: b""}
     err_tail = b""
@@ -506,19 +555,21 @@ def run_edit_agy(
     except _EditProtocolError:
         malformed = True
     finally:
-        if proc.poll() is None:
-            _kill_group(proc.pid, signal.SIGTERM)
-            try:
-                proc.wait(timeout=0.25)
-            except subprocess.TimeoutExpired:
-                pass
-        _kill_group(proc.pid, signal.SIGKILL)
         try:
-            proc.wait(timeout=1)
-        except subprocess.TimeoutExpired:
-            pass
-        proc.stdout.close()
-        proc.stderr.close()
+            if proc.poll() is None:
+                _kill_group(proc.pid, signal.SIGTERM)
+                try:
+                    proc.wait(timeout=0.25)
+                except subprocess.TimeoutExpired:
+                    pass
+            _kill_group(proc.pid, signal.SIGKILL)
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                raise EditCleanupError("isolated AGY did not exit after SIGKILL and the cleanup deadline") from None
+        finally:
+            proc.stdout.close()
+            proc.stderr.close()
     error_kind = _edit_error(stream, proc.returncode, timed_out, truncated, cancelled,
                              malformed, err_markers, agy_error)
     retryable = (agy_error or {}).get("retryable")

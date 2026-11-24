@@ -68,7 +68,7 @@ def test_cli_checks_exact_candidate_and_applies_only_reviewed_hash(project, caps
     repo, src, profile, jobs = project
     checked = []
 
-    def check(argv, *, tree, timeout_s, should_cancel):
+    def check(argv, *, tree, timeout_s, should_cancel, deadline=None):
         assert argv == ['python3', '-m', 'unittest']
         assert timeout_s > 0 and not should_cancel()
         candidate = tree / 'src' / 'app.py'

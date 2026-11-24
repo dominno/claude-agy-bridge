@@ -1,6 +1,6 @@
 {
   "name": "agy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Read-only AGY delegation, isolated coding jobs, and explicit local result checks.",
   "author": {
     "name": "Dominik Szopa"

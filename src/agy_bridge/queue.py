@@ -1,22 +1,35 @@
 """Serial job queue: the delegate pipeline remains the only sender."""
 from __future__ import annotations
 
-import argparse
 import contextlib
 import fcntl
-import io
 import hashlib
 import json
 import os
 import re
+import stat
 import time
 
 from . import config, safety, stage, verdicts
 
 MAX_JOB_BYTES = 128 * 1024
+MAX_RESULT_BYTES = 8 * 1024 * 1024
 MAX_NEED_LINE = 1024
 MAX_NEED_CANDIDATES = 100
 MAX_NEED_TEXT = 64 * 1024
+RESULT_WARNING = 'unverified model output: verify claims against original sources before use.'
+RESULT_FORMAT = '<!-- agy-bridge-result-v2 -->'
+RESULT_CHECKSUM = '\n<!-- agy-bridge-result-sha256: '
+
+
+def _owned_regular(info, links):
+    return stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == links
+
+
+def _same_archive_link(info, initial):
+    return _owned_regular(info, 2) and (
+        info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+    ) == (initial.st_dev, initial.st_ino, initial.st_size, initial.st_mtime_ns)
 
 
 def validate(root, job):
@@ -93,7 +106,7 @@ class Paths:
         with safety.directory(os.path.join(self.root, self.queue), create=create) as fd:
             fcntl.flock(fd, fcntl.LOCK_EX)
             try:
-                yield
+                yield fd
             finally:
                 fcntl.flock(fd, fcntl.LOCK_UN)
 
@@ -161,12 +174,14 @@ class Paths:
                     if (not isinstance(row, dict) or type(row.get('pid')) is not int or row['pid'] < 1 or
                             row.get('mode') not in ('watch', 'run')):
                         return dict(pid='unknown', mode='unknown')
+                    watcher = dict(pid=row['pid'], mode=row['mode'])
                     if row.get('job') is not None:
-                        verdicts.name(row['job'])
-                        if not isinstance(row.get('started'), (int, float)):
-                            return dict(pid=row['pid'], mode=row['mode'])
-                    return row
-                except (ValueError, config.UsageError):
+                        job = verdicts.name(row['job'])
+                        started = row.get('started')
+                        if type(started) in (int, float) and 0 <= started < float('inf'):
+                            watcher.update(job=job, started=started)
+                    return watcher
+                except (ValueError, config.UsageError, RecursionError):
                     return dict(pid='unknown', mode='unknown')
             return None
         finally:
@@ -204,7 +219,7 @@ class Paths:
 
     def move(self, rel, ok):
         dest = self.queue+('/done' if ok else '/failed')
-        with safety.directory(os.path.join(self.root, self.queue)) as src:
+        with self.publication() as src:
             with safety.directory(os.path.join(self.root, dest), create=True) as dst:
                 name = os.path.basename(rel)
                 fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=src)
@@ -222,6 +237,36 @@ class Paths:
                     except FileExistsError:
                         continue
                 raise OSError('no unused archive name')
+
+    def recover_archive(self, src, name, initial):
+        """Complete an interrupted link/unlink for this exact job and saved result."""
+        if not _owned_regular(initial, 2) or initial.st_size > MAX_JOB_BYTES:
+            raise stage.Refused([stage.Refusal('R6', 'unsafe pending job', name)])
+        for archive in ('done', 'failed'):
+            try:
+                with safety.directory(os.path.join(self.root, self.queue, archive)) as dst:
+                    archived = os.stat(name, dir_fd=dst, follow_symlinks=False)
+                    if not _same_archive_link(archived, initial):
+                        continue
+                    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=src)
+                    with os.fdopen(fd, 'rb') as stream:
+                        if not _same_archive_link(os.fstat(stream.fileno()), initial):
+                            raise OSError('pending archive pair changed')
+                        data = stream.read(MAX_JOB_BYTES + 1)
+                        if len(data) != initial.st_size or not _same_archive_link(os.fstat(stream.fileno()), initial):
+                            raise OSError('pending archive pair changed')
+                    code = _saved_result(self, name[:-4], hashlib.sha256(data).hexdigest())
+                    if code is None or (code == 0) != (archive == 'done'):
+                        raise config.UsageError('archived job conflicts with existing result')
+                    current = os.stat(name, dir_fd=src, follow_symlinks=False)
+                    archived = os.stat(name, dir_fd=dst, follow_symlinks=False)
+                    if not _same_archive_link(current, initial) or not _same_archive_link(archived, initial):
+                        raise OSError('pending archive pair changed')
+                    os.unlink(name, dir_fd=src)
+                    return code
+            except FileNotFoundError:
+                continue
+        raise stage.Refused([stage.Refusal('R6', 'pending job has unrelated hard links', name)])
 
 
 def need_files(root, answer, current):
@@ -255,44 +300,76 @@ def need_files(root, answer, current):
 
 
 def attempt(root, job, files, task, allow=False):
-    from .cli import cmd_delegate
-    args = argparse.Namespace(repo=root, file=files, glob=[], model=job.get('model'),
-        cite=True, require_verified=job.get('cite', False), allow_fragment_file=None,
-        timeout=str(job.get('timeout', '5m')), allow_non_git_root=allow,
-        max_bytes=config.MAX_TOTAL_BYTES, max_file_bytes=config.MAX_FILE_BYTES,
-        max_out_bytes=config.MAX_OUT_BYTES, out=None, task=[task])
-    captured = {}
-    # Delegate's ordinary rendering stays unchanged; retain its full in-memory answer.
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
-        cmd_delegate(args, dry=False, capture=captured)
-    captured['diagnostics'] = errors.getvalue()
-    return captured
+    from .delegation import DelegationRequest, execute
+    request = DelegationRequest(
+        repo=root, task=task, files=files, model=job.get('model'), cite=True,
+        require_verified=job.get('cite', False), timeout=str(job.get('timeout', '5m')),
+        allow_non_git_root=allow,
+    )
+    return execute(request).as_queue_record()
+
+
+def _saved_result(paths, name, digest):
+    try:
+        text = safety.read(paths.root, paths.results+'/'+name+'.md', MAX_RESULT_BYTES).decode('utf-8')
+    except config.UsageError:
+        return None
+    invalid = config.UsageError('reused job name conflicts with existing result; choose a new name')
+    prefix = '# '+name+'\n\n'+RESULT_WARNING+'\n\n'
+    if not text.startswith(prefix) or not text.endswith('\n'):
+        raise invalid
+
+    if text.startswith(prefix + RESULT_FORMAT + '\n'):
+        text, separator, checksum = text.rpartition(RESULT_CHECKSUM)
+        expected = hashlib.sha256(text.encode('utf-8')).hexdigest()
+        if not separator or checksum != expected + ' -->\n':
+            raise invalid
+
+    header, attempt_marker, body = text.partition('\n### Attempt 1 (round 1)\n')
+    fields = dict(line.split(': ', 1) for line in header.splitlines() if ': ' in line)
+    code = fields.get('retained_exit_code', '')
+    if (not attempt_marker or fields.get('job_sha256') != digest or
+            not re.fullmatch(r'[0-9]{1,3}', code) or fields.get('round') not in ('1', '2') or
+            not re.match(r'exit_code: [0-9]{1,3}\nbytes: [0-9]+\nseconds: [^\n]+\n'
+                         r'files sent: [^\n]*\nVERIFIED: [0-9]+\nUNVERIFIED: [0-9]+\n', body)):
+        raise invalid
+    _, round_marker, answer = body.partition('\n## Round 1\nfiles added: \n\n')
+    if not round_marker:
+        raise invalid
+    if fields['round'] == '2':
+        second_round = re.search(r'\n## Round 2\nfiles added: [^\n]+\n\n', answer)
+        if second_round is None:
+            raise invalid
+        has_answer = bool(answer[:second_round.start()].strip() or answer[second_round.end():].strip())
+    else:
+        has_answer = bool(answer.strip())
+    if int(code) == 0 and not has_answer:
+        raise invalid
+    return int(code)
 
 
 def run_job(paths, rel):
-    with paths.publication():
-        raw = safety.read(paths.root, rel, MAX_JOB_BYTES)
-    job = validate(paths.root, json.loads(raw))
-    if os.path.basename(rel) != job['name']+'.job':
+    name = os.path.basename(rel)
+    job_name = verdicts.name(name[:-4])
+    if rel != paths.queue+'/'+job_name+'.job':
         raise config.UsageError('job filename must match name.job')
-    result_rel = paths.results+'/'+job['name']+'.md'
+    with paths.publication() as src:
+        info = os.stat(name, dir_fd=src, follow_symlinks=False)
+        if info.st_nlink == 2 and stat.S_ISREG(info.st_mode):
+            return paths.recover_archive(src, name, info)
+        raw = safety.read(paths.root, rel, MAX_JOB_BYTES)
+    result_rel = paths.results+'/'+job_name+'.md'
     digest = hashlib.sha256(raw).hexdigest()
     for archive in ('done', 'failed'):
-        if paths.exists(paths.queue+'/'+archive+'/'+job['name']+'.job'):
+        if paths.exists(paths.queue+'/'+archive+'/'+name):
             raise config.UsageError('reused job name conflicts with archived job')
-    # Reconcile only the exact bytes saved before an interrupted archive move.
-    try:
-        existing = safety.read(paths.root, result_rel, 8*1024*1024).decode('utf-8')
-    except config.UsageError:
-        existing = None
-    if existing is not None:
-        header = dict(line.split(': ',1) for line in existing.split('### Attempt',1)[0].splitlines() if ': ' in line)
-        code = header.get('retained_exit_code', '')
-        if header.get('job_sha256') != digest or not code.isascii() or not code.isdigit() or len(code)>3:
-            raise config.UsageError('reused job name conflicts with existing result; choose a new name')
-        code = int(code)
+    code = _saved_result(paths, job_name, digest)
+    if code is not None:
         paths.move(rel, code == 0)
         return code
+    job = validate(paths.root, json.loads(raw))
+    if job['name'] != job_name:
+        raise config.UsageError('job filename must match name.job')
     files = list(dict.fromkeys(context_files(paths.root, job)+job['files']))
     task = job['task']
     rounds, attempts = [], []
@@ -327,7 +404,7 @@ def run_job(paths, rel):
     success = [r for r in rounds if r['item']['exit_code']==0]
     retained = (success or rounds)[-1]['item']
     sent = {f['path']:f['bytes'] for a in attempts for f in a.get('files', [])}
-    head = ['# '+job['name'], '', 'unverified model output: verify claims against original sources before use.', '',
+    head = ['# '+job['name'], '', RESULT_WARNING, '', RESULT_FORMAT,
             'job_sha256: '+digest, 'model: '+(job.get('model') or 'default'), 'round: '+str(len(rounds)),
             'exit_code: '+str(code), 'retained_exit_code: '+str(retained['exit_code']),
             'bytes: '+str(sum(sent.values())), 'seconds: '+str(retained['seconds']),
@@ -350,9 +427,70 @@ def run_job(paths, rel):
     for r in rounds:
         head += ['', '## Round '+str(r['number']), 'files added: '+', '.join(r['added']), '',
                  r['item'].get('rendered_cite') or r['item']['answer']]
-    safety.write(paths.root, result_rel, '\n'.join(head)+'\n')
+    text = '\n'.join(head)+'\n'
+    checksum = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    safety.write(paths.root, result_rel, text + RESULT_CHECKSUM + checksum + ' -->\n')
     paths.move(rel, bool(success))
     return 0 if success else retained['exit_code']
+
+
+def snapshot(paths):
+    """Read queue entry metadata and the live lock without opening any job payload."""
+    warnings = []
+    try:
+        watcher = paths.running()
+    except (OSError, stage.Refused):
+        watcher = None
+        warnings.append('queue watcher metadata could not be read safely')
+    if watcher and watcher['pid'] == 'unknown':
+        warnings.append('active queue watcher metadata is unreadable')
+
+    jobs = {}
+    invalid = False
+    for phase, rel in (('pending', paths.queue), ('done', paths.queue+'/done'),
+                       ('failed', paths.queue+'/failed')):
+        try:
+            with safety.directory(os.path.join(paths.root, rel)) as directory:
+                for name in sorted(os.listdir(directory)):
+                    if not name.endswith('.job'):
+                        continue
+                    try:
+                        job_id = verdicts.name(name[:-4])
+                        info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                    except FileNotFoundError:
+                        continue
+                    except (OSError, config.UsageError):
+                        invalid = True
+                        continue
+                    if not _owned_regular(info, 1):
+                        invalid = True
+                        continue
+                    active = phase == 'pending' and watcher is not None and watcher.get('job') == job_id
+                    # Prefer archive metadata if a move occurs while scanning.
+                    jobs[(job_id, info.st_dev, info.st_ino)] = dict(
+                        id=job_id, phase='running' if active else phase, active=active,
+                        created_at=None, updated_at=info.st_mtime,
+                        started_at=watcher['started'] if active else None,
+                    )
+        except FileNotFoundError:
+            continue
+        except OSError:
+            invalid = True
+    if invalid:
+        warnings.append('some queue entries could not be inspected safely')
+
+    rows = list(jobs.values())
+    counts = dict.fromkeys(('pending', 'running', 'done', 'failed'), 0)
+    for row in rows:
+        counts[row['phase']] += 1
+    return dict(repo=paths.root, queue_dir=paths.queue, active=watcher is not None,
+                watcher_pid=watcher['pid'] if watcher else None, mode=watcher['mode'] if watcher else None,
+                counts=counts, jobs=rows, warnings=warnings)
+
+
+def list_jobs(paths):
+    view = snapshot(paths)
+    return view['jobs'], view['warnings']
 
 
 def status(paths, threshold=300):
