@@ -5,12 +5,56 @@ bin/agy-bridge delegate --repo <root> --file <path>... [--glob <pattern>...] [--
                         [--timeout 5m] [--max-bytes N] [--out <file>]
                         [--cite [--require-verified]] [--allow-fragment-file <path>] -- "<task>"
 bin/agy-bridge dry-run  (same arguments; prints the manifest and the agy command, sends nothing)
-bin/agy-bridge doctor   [--offline]
+bin/agy-bridge doctor   [--repo <root>] [--offline]
 bin/agy-bridge events   [--repo <root>] [--tail N]
 ```
 
 Queue commands are in [QUEUE.md](QUEUE.md); `verdict`, `verdicts`, `grade-mutants`, `apply-diff` and `stats` are in
 [GRADING.md](GRADING.md). `bin/agy-bridge <command> --help` lists every option.
+
+## Implementation jobs
+
+```text
+bin/agy-bridge implement [--repo <root>] [--file <path>...] [--glob <pattern>...]
+                         [--write-dir <dir>...] [--model <name>] [--profile <absolute path>]
+                         [--gemini-api-key] [--check <JSON argv>]
+                         [--turn-timeout 25m] [--job-timeout 2h] [--dry-run] [--foreground]
+                         -- "<task>"
+bin/agy-bridge implement-status <job-id>
+bin/agy-bridge implement-patch <job-id>
+bin/agy-bridge implement-cancel <job-id>
+bin/agy-bridge implement-resume <job-id> [--foreground]
+bin/agy-bridge implement-apply <job-id> --sha256 <reviewed patch hash>
+```
+
+`implement --dry-run` prints a JSON manifest from the current bytes selected by `--file` and `--glob`. It needs a Git
+project and at least one matching file. A dry run makes no AGY call and creates no job. A submitted job requires an
+absolute `--profile` path to a dedicated directory with mode `0700`. `--gemini-api-key` opts into forwarding the
+existing environment variable `GEMINI_API_KEY`. The option is saved with the job. Supply `GEMINI_API_KEY` in the
+environment again when resuming that job.
+
+By default, the permitted output paths are the files already in the snapshot. When you supply `--write-dir`, edits
+and new files must be under one of its paths. Use `--write-dir .` for the whole snapshot and its new files. `--check`
+accepts a JSON array such as `'["python3", "-m", "unittest", "discover", "-s", "tests"]'`. The worker runs this
+fixed command offline on a copy of the actual candidate. This command may also run against the baseline to record a
+before-and-after result. `--turn-timeout` accepts 1 second to 1 hour. `--job-timeout` accepts 1 second to 24 hours per
+invocation. Resume starts a new invocation of the same job. [Setup and examples](IMPLEMENT.md).
+
+| Command or phase | Output and meaning |
+|---|---|
+| `implement`, `implement-resume` | Background start returns a JSON job ID and `queued`. `--foreground` waits and returns the worker exit code. |
+| `implement-status` | JSON phase, Git base, attempt, available timestamps, recorded check exit codes, change list, and patch hash. |
+| `implement-cancel` | Requests cancellation for the current invocation and returns `cancel_requested`. Check status for the outcome. |
+| `implement-patch` | Writes the saved unified diff to stdout after checking its hash. Partial patches can be inspected once saved. |
+| `ready`, `verified` | A patch is available for review. `verified` also records a successful configured check. |
+| `checks_failed`, `no_changes` | The check failed after retries, or there were no file changes. |
+| `canceled`, `timed_out`, `quota`, `auth_required`, `interrupted`, `failed` | The worker stopped. Resume can continue from the retained workspace. |
+| `implement-apply`, `applied` | Applies a `ready` or `verified` patch after matching the supplied hash and source preimages. The working tree receives the files. |
+
+Background commands report submission success independently of the eventual job outcome. For a finished job,
+`implement-status` shows `bridge_exit` when the worker recorded one. `check_exit` is the check's own exit code.
+Application writes the source working tree. Use Git to stage the resulting files. Job state and patch files live
+under `~/.agy-bridge/implement/`.
 
 ## Exit codes
 
@@ -27,8 +71,9 @@ Queue commands are in [QUEUE.md](QUEUE.md); `verdict`, `verdicts`, `grade-mutant
 | 13 | `agy` missing |
 | 14 | unsupported `agy` version |
 | 15 | soft permission denial |
-| 16 | output cap reached |
+| 16 | output cap reached, or an implementation produced no changes or exhausted its check retries |
 | 17 | unverified citation (only with `--cite --require-verified`) |
+| 130 | interrupted or implementation canceled |
 
 ## Output and repo config
 

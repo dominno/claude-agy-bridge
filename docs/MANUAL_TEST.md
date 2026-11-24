@@ -4,6 +4,9 @@ Use this to check `agy-bridge` against a real `agy`, for example after a new `ag
 fake one. The goal is to answer the questions in `COMPAT.md` (C1–C16) and to confirm, with the real thing, that the
 safety rules hold.
 
+Sections 0–13 cover read-only delegation. For the Linux edit worker, start at
+[section 14](#14-check-implementation-on-linux).
+
 **Read this first.**
 - `agy` sends what it reads to Google. Use only fake files in this test.
 - Do it on a **throw-away macOS user** (or at least a throw-away `HOME`), not on your main account. Reason: `agy` runs
@@ -59,8 +62,8 @@ cd /tmp/agy-bridge-review
 python3 -m venv /tmp/agy-venv && /tmp/agy-venv/bin/pip install pytest   # only needed for the tests
 /tmp/agy-venv/bin/python -m pytest -q
 ```
-Expect every test to pass. If the tests fail here, stop: the copy is
-broken or the Python is too old.
+Expect the tests available on your platform to pass. Some sandbox checks are skipped on hosts without the required
+features. Record the OS, Python version, and failure before running any authenticated probes.
 
 ## 3. Make a test repository with fake files
 ```
@@ -218,3 +221,92 @@ rm -rf ~/agy-test-repo ~/agy-canary ~/.agy-bridge /tmp/agy-venv
 Sign out of `agy` (`agy` has a logout or sign-out command; check `agy --help`), and delete the `agytest` user when you
 are done (System Settings → Users & Groups, "Delete the home folder"). As your main user:
 `rm -rf /tmp/agy-bridge-review`.
+
+## 14. Check implementation on Linux
+
+Use a disposable Linux user or VM, Git, Python, AGY CLI 1.5.16 or later in major version 1, and Bubblewrap with
+unprivileged user namespaces. All files in this fixture are synthetic. The example uses `GEMINI_API_KEY` from your
+environment. For another supported credential setup, see the [implementation guide](IMPLEMENT.md).
+
+### Create a fixture and preview it
+
+Set `bridge` to the full path of this checkout's `bin/agy-bridge`, then create the fixture:
+
+```sh
+bridge=/absolute/path/to/claude-agy-bridge/bin/agy-bridge
+repo=$(mktemp -d "$HOME/agy-implementation-fixture.XXXXXXXX")
+profile=$(mktemp -d "$HOME/agy-implementation-profile.XXXXXXXX")
+mkdir "$repo/src" "$repo/tests"
+cat > "$repo/src/calc.py" <<'PY'
+def subtract(a, b):
+    return a + b
+PY
+cat > "$repo/tests/test_calc.py" <<'PY'
+import unittest
+from src.calc import subtract
+
+
+class CalculatorTest(unittest.TestCase):
+    def test_subtract(self):
+        self.assertEqual(subtract(5, 3), 2)
+PY
+git init -q "$repo"
+git -C "$repo" add src tests
+git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm fixture
+
+"$bridge" implement --dry-run --repo "$repo" \
+  --file src/calc.py --file tests/test_calc.py --write-dir src \
+  --check '["python3", "-m", "unittest", "discover", "-s", "tests"]' \
+  -- 'Fix the wrong result in src/calc.py. Keep the test as written.'
+```
+
+The manifest should show both files, their SHA-256 hashes, `write_dirs` with `src`, and `check_configured` set to
+`true`. The job should first record a failed baseline test. The model can read the test, while the approved patch
+scope covers `src/`.
+
+### Run, review, and apply
+
+```sh
+job_id=$("$bridge" implement --repo "$repo" --profile "$profile" --gemini-api-key \
+  --file src/calc.py --file tests/test_calc.py --write-dir src \
+  --check '["python3", "-m", "unittest", "discover", "-s", "tests"]' \
+  -- 'Fix the wrong result in src/calc.py. Keep the test as written.' \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["job_id"])')
+"$bridge" implement-status "$job_id"
+```
+
+Repeat `implement-status` until the job reaches a terminal phase. Expect `verified`, `baseline_check_exit: 1`, and
+`check_exit: 0`. A sandbox startup refusal means this host cannot run the acceptance test. Record the error with
+the host and Bubblewrap versions. A failed final check or no changes is a failed acceptance run.
+
+```sh
+git -C "$repo" diff --exit-code
+patch=$(mktemp)
+"$bridge" implement-patch "$job_id" > "$patch"
+cat "$patch"
+```
+
+Confirm the patch changes `src/calc.py` only. Try applying with an incorrect digest and verify that the source
+stays clean. Then apply the digest of the patch you reviewed:
+
+```sh
+"$bridge" implement-apply "$job_id" --sha256 "$(printf '%064d' 0)"
+git -C "$repo" diff --exit-code
+
+reviewed_sha256=$(sha256sum "$patch" | cut -d ' ' -f 1)
+"$bridge" implement-apply "$job_id" --sha256 "$reviewed_sha256"
+git -C "$repo" diff -- src/calc.py
+```
+
+The incorrect digest should be refused. The reviewed patch should leave the job `applied` and show a working-tree
+change for `src/calc.py`. The test source should match the original commit.
+
+### Test pause and continuation on a longer task
+
+Use a second disposable fixture with a multi-file refactor and explicit acceptance tests. Submit it with enough
+time to observe an active turn, close Claude Code if used, and inspect the local worker with `implement-status`.
+When it has a `conversation_id` and an active phase, run `implement-cancel <job-id>`, wait for `canceled`, then
+run `implement-resume <job-id>`. Keep the credential available in the resume environment. Confirm the same job
+and conversation resume, the fixture remains unchanged until you apply, and the final candidate passes the checks.
+Record version, model, host, elapsed time, phases, changes, and check outcomes. Record which stages ran on a real
+account and which used the offline fake. Omit credentials and unrelated file content from shared notes.

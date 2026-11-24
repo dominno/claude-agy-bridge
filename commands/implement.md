@@ -1,12 +1,21 @@
 ---
 description: Delegate code edits to Antigravity in an isolated workspace and review the resulting patch
-argument-hint: <task and approved input files, or status/resume/cancel followed by a job ID>
+argument-hint: <task and approved input files, or status/patch/resume/cancel followed by a job ID>
 ---
 
 Request: $ARGUMENTS
 
-Use `${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge implement --dry-run --repo <absolute project path> --file <path> -- "<task>"` to inspect the input manifest. Add explicit `--file` or `--glob` arguments for the code, tests and build configuration this task needs. Files appearing in the manifest may be processed by Google's model.
+For an existing job, use `${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge implement-status <id>`, `implement-patch <id>`,
+`implement-resume <id>`, or `implement-cancel <id>` as requested. Report the phase and recorded check outcomes.
 
-Submit with `implement --repo ... --profile <dedicated Antigravity home> --file ... -- "<task>"`. Use `--write-dir` to allow edits and new files under a specified directory, and `--check` only with a test argv the user authorizes. Read `docs/IMPLEMENT.md` for the host and authentication requirements. The command returns a job ID. Use `implement-status <id>`, `implement-resume <id>`, and `implement-cancel <id>` as requested. Read `implement-patch <id>` and report the actual changes and check outcomes.
+For a new task, use `${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge implement --dry-run --repo <absolute project path>
+--file <path> -- "<task>"` to inspect the input manifest. Add explicit `--file` or `--glob` arguments for the code,
+tests and build configuration the task needs. Google can process the files that appear in the manifest.
 
-Apply the patch only if the user authorizes it after review. Use `implement-apply <id> --sha256 <reviewed hash>` to check that the reviewed patch still applies to the original files.
+Submit with `implement --repo ... --profile <dedicated Antigravity home> --file ... -- "<task>"`. Use `--write-dir`
+to allow edits and new files under a specific directory, and use `--check` with a test argv the user authorized.
+Read `docs/IMPLEMENT.md` for host and authentication requirements. Return the job ID and use `implement-patch <id>`
+to review the changes after the worker has saved a patch.
+
+Apply after the user reviews and authorizes the patch. `implement-apply <id> --sha256 <reviewed hash>` verifies the
+hash and original files, then writes the reviewed changes to the working tree.

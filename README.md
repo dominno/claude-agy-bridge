@@ -10,10 +10,11 @@ Not affiliated with or endorsed by Google or Anthropic.
 (2026-10-20, fake files only): doctor, dry-run and delegate work, and writes, commands, reads outside the folder and
 network use were not possible headless without a permission. That is one version on one machine, not a guarantee; see
 [`docs/COMPAT.md`](docs/COMPAT.md) for what was measured and what stays unverified. A basic delegation also worked on
-1.4.12. The plugin has been loaded in real Claude Code sessions. The suite runs on macOS and Linux (`bwrap` backend);
-the `unshare` fallback has not been exercised on a real Linux host.
+1.4.12. The plugin has been loaded in real Claude Code sessions. Implementation has offline coverage for edit,
+check, resume and patch application. An authenticated end-to-end implementation job still needs verification on a
+Linux host with working Bubblewrap namespaces.
 
-![How agy-bridge works with Claude Code: connect it, what happens when you delegate, how to use it](docs/img/how-it-works.png)
+![agy-bridge workflow for read-only reviews and resumable implementation jobs](docs/img/how-it-works.png)
 
 ## When to use it
 
@@ -22,12 +23,14 @@ project files. Review the files that can be sent, the resulting patch, and the c
 
 ## Requirements
 
-- macOS or Linux for read-only delegation. `implement` requires Linux and Bubblewrap with working unprivileged user namespaces.
-- Python 3.9 or newer. No packages are needed to run it.
+- macOS or Linux for read-only delegation. Python 3.9 or newer. The bridge uses only the standard library.
 - [Claude Code](https://claude.com/claude-code), for the slash commands. The script also works on its own.
-- The Antigravity CLI, installed and signed in: follow [Google's instructions](https://antigravity.google/docs/cli-using),
-  then check with `agy --version` and `agy models`. Major version 1 is supported; other majors are refused.
-- Only for `grade-mutants` and `apply-diff`: `sandbox-exec` (macOS) or `bwrap`/`unshare` (Linux).
+- Antigravity CLI major version 1 and credentials for your selected model. Use `agy --version` and `agy models` to
+  check the installation. Read-only delegation supports 1.x through 1.5.6 and 1.5.16 onwards. See
+  [Google's installation instructions](https://antigravity.google/docs/cli-using).
+- `implement` requires AGY 1.5.16 or later in major version 1, Git, Linux, Bubblewrap with working unprivileged user
+  namespaces, and a dedicated AGY profile.
+- `grade-mutants` and `apply-diff` use `sandbox-exec` on macOS or `bwrap`/`unshare` on Linux.
 
 ## Quick start
 
@@ -68,16 +71,15 @@ bin/agy-bridge delegate --repo "$PWD" --file src/a.py --timeout 5m -- "Explain w
 | `/agy:doctor` | Read-only health check |
 | `/agy:dry-run` | Shows what a delegation would send; sends nothing |
 | `/agy:delegate` | Hands one task to `agy` and returns the answer |
-| `/agy:implement` | Edits an isolated snapshot and returns a job ID for the reviewable patch |
+| `/agy:implement` | Starts an edit job in an isolated snapshot and returns its job ID |
 | `/agy:queue` | Adds a job to the serial queue or drains it |
 | `/agy:status` | Shows the watcher, queue counts and results awaiting a verdict |
 
 ## Data flow warning
 
-The staged files and your task text are sent to Google by `agy` and processed by a model there. The scan and the
-denylist reduce accidents; they do not detect every secret (encoded or split secrets pass) and they cannot judge
-whether content is confidential. Run `dry-run` first and read the manifest. Do not delegate anything you would not
-send to a third party.
+AGY can send staged files and task text to Google for processing. The scan and denylist catch some secret formats and
+file names. Encoded, split, or confidential content can pass. Review the manifest from `dry-run` for delegation or
+`implement --dry-run` for edits before submitting.
 
 ## What read-only delegation does
 
@@ -87,20 +89,16 @@ send to a third party.
 
 ## Read-only delegation boundaries
 
-- Pass `--dangerously-skip-permissions`, `--yolo` or any permission-widening flag.
-- Pass your environment on: the process `agy` starts with has exactly `HOME`, `PATH` (absolute entries only),
-  `LANG`, `TERM`, `TMPDIR`. This says nothing about what `agy` itself can read under that `HOME`.
-- Stage a file whose path, **or the path of the `--repo` folder above it**, has a denylisted name (`.env`, `.git`,
-  `.codex`, `.claude`, `.ssh`, `gcloud`, `*credentials*`, ...); symlinks, hard links, devices, pipes, binary or
-  oversized files; or any file with a key-shaped string (the report names the file, count and first hit line, never the text).
-- Accept a `--repo` that is `/`, your home folder or anything above it (compared by device and inode, so letter case,
-  symlinks and `..` do not matter), a system folder such as `/etc`, a denylisted folder, or a folder inside a hidden
-  folder of your home (such as `~/.config/foo`). By default `--repo` must hold a real `.git` directory (or a `.git` file
-  naming a real directory inside it); `--allow-non-git-root` relaxes only that.
-- Run `agy` inside your repository or keep file contents in its metadata logs. Answers live only in temporary storage
-  or the explicit repository workflow directory; configured queue result folders must remain inside the repo.
-- Install hooks, start an unsolicited watcher, install subagents or skills; touch `~/.claude` or `~/.gemini`; or make a network call
-  itself.
+- The bridge starts `agy` without permission-widening flags. From 1.5.16 onward it also pins read-only session settings.
+- The process environment contains only `HOME`, `PATH` (absolute entries), `LANG`, `TERM`, and `TMPDIR`. AGY receives the
+  real `HOME`, so environment filtering alone cannot limit what it reads there.
+- Staging rejects denylisted paths, symlinks, hard links, devices, pipes, binary or oversized files, and key-shaped
+  content. For a content match the report names the file, count and first hit line.
+- The selected root must be an ordinary project directory. System directories, the home directory and its ancestors,
+  denylisted paths, and hidden folders under the home directory are refused. A `.git` directory or local `gitdir:` marker
+  is required unless you pass `--allow-non-git-root`.
+- AGY runs in the staged copy. Logs contain metadata. Answers live in temporary storage or the selected repository
+  workflow directory. The queue starts only when you invoke it.
 
 ## What the slash commands can and cannot do
 
@@ -115,9 +113,19 @@ To have a diff reviewed, pass the changed source files with `--file`.
 
 ## Implement code with AGY
 
-`implement` starts a local background worker that gives AGY a private, writable snapshot. It exports the actual Git
-patch, optionally runs a configured offline check, and can resume the AGY conversation after interruption. It requires
-AGY CLI 1.5.16 or newer in major version 1. See [setup and usage](docs/IMPLEMENT.md).
+Use `/agy:implement` in Claude Code, or preview a job from the terminal inside your Git project:
+
+```sh
+bin/agy-bridge implement --dry-run --repo "$PWD" \
+  --file src/parser.py --file tests/test_parser.py --write-dir src \
+  --check '["python3", "-m", "unittest", "discover", "-s", "tests"]' \
+  -- 'Fix the parser bug and run the regression tests.'
+```
+
+Review the manifest, then submit without `--dry-run` and supply `--profile` as shown in the setup guide. The job ID opens
+`implement-status`, `implement-patch`, `implement-cancel`, and `implement-resume`. The worker can continue after you
+close Claude Code while the Linux host stays running. After reviewing the patch, `implement-apply` requires its exact
+SHA-256. [Set up credentials and run the full workflow](docs/IMPLEMENT.md).
 
 ## Job queue
 

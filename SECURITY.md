@@ -1,7 +1,7 @@
 # Security
 
-agy-bridge is meant to be safe to run on a machine that holds production API keys. Its safety comes from rules enforced
-by the script (`docs/THREAT_MODEL.md` lists each rule and the test that proves it), not from instructions to a model.
+agy-bridge validates staged inputs and constrains how they reach Antigravity. The implementation worker also uses
+Linux Bubblewrap to isolate the writable workspace and the local check. [Threat model and tests](docs/THREAT_MODEL.md).
 
 ## Reporting a problem
 Report a suspected rule bypass privately through
@@ -10,10 +10,12 @@ post a working bypass in a public issue. Please include the command, the files i
 exit code you saw.
 
 ## Known limits
-- Files that pass the checks are sent to Google. Encoded, split or novel secrets are not detected.
-- `agy` runs with your real `HOME`, so it can find its own sign-in. Whether `agy` itself can read other files under
-  `HOME`, or reach the network from its tools, is only partly measured (`docs/COMPAT.md`). The bridge cannot sandbox it.
+- AGY can send selected files and task text to Google for processing. Encoded, split, or novel secrets can pass the scan.
+- Read-only delegation gives AGY the current `HOME` so it can find its sign-in. File and network access through AGY's
+  tools are only partly measured. [Recorded AGY behavior](docs/COMPAT.md).
+- Implementation gives AGY a private candidate and a dedicated profile with network access for the model. It runs
+  the approved check offline on a separate copy. The host controls resource limits. [Implementation requirements](docs/IMPLEMENT.md).
 - The bridge cannot stop a model from returning harmful text. Verify every answer.
 - Untested on Windows.
-- `allowed-tools` in the command files pre-approves the script with any arguments; it does not limit them.
-- `--unsafe-no-sandbox` runs model-written code with your privileges and network access.
+- Claude Code pre-approves the listed read-only bridge subcommands. `/agy:implement` uses normal Claude Code permissions.
+- For the grading commands, `--unsafe-no-sandbox` runs model-written code with your privileges and network access.

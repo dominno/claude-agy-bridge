@@ -7,8 +7,8 @@ on a throw-away account, see [MANUAL_TEST.md](MANUAL_TEST.md)).
 
 ## How the bridge copes
 - `runner.py` builds AGY arguments from the reported version and the selected workflow. From AGY 1.5.16 onward the
-  read-only runner pins session permissions. Versions 1.5.7–1.5.15 default to Auto when supported and are refused
-  because the bridge has not verified the session settings switch on those releases.
+  read-only runner pins session permissions with `--settings`. The bridge refuses versions 1.5.7–1.5.15 because
+  those releases can default to Auto and are outside the bridge's supported session-settings range.
 - An unknown major version fails closed with exit code 14. The implementation workflow requires AGY 1.5.16 or above
   within major version 1 and Linux Bubblewrap. Its authenticated edit and resume behavior stays unverified until a
   real account and a host that supports Bubblewrap are available.
@@ -68,3 +68,10 @@ protection. It was tried here and changed nothing observable, because nothing wa
 A smaller check, with one fake file in a scratch repository: `doctor --offline` passes and `delegate` with
 `gemini-3.8-flash-low` returned a correct answer in 10 s. The permission probes above (C7, C10, C11) were **not** repeated
 on this version.
+
+## Implementation verification
+
+Offline tests exercise manifest creation, file edits, check retries, job cancellation and resume, and exact patch
+application. They simulate the AGY turn. An authenticated edit and resume with real AGY on a Linux host with
+working Bubblewrap user namespaces remains to be measured. To record the AGY version, actual file changes, check
+result, and resume behavior, use the [implementation acceptance test](MANUAL_TEST.md#14-check-implementation-on-linux).

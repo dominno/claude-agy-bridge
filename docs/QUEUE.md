@@ -3,6 +3,9 @@
 The queue is built into agy-bridge; no repository scripts or external queue service are needed.
 All execution is serial. The existing delegate implementation handles every attempt, including its
 read-once scan/staging, five-name agy environment, output cap, version/argv checks and metadata events.
+For work that edits files, submit an implementation job through `implement` or `/agy:implement`. It has its own job ID,
+status, cancellation, resume and patch review commands. The read-only queue accepts delegation jobs. [Implementation
+setup and commands](IMPLEMENT.md).
 
 ```sh
 bin/agy-bridge queue add job.json --repo /path/to/repo
