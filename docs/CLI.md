@@ -17,46 +17,53 @@ Queue commands are in [QUEUE.md](QUEUE.md). See [GRADING.md](GRADING.md) for `ve
 ## Job inventory
 
 ```text
-agy-bridge jobs list [--active] [--repo ROOT] [--queue-dir PATH] [--json]
+agy-bridge jobs
+agy-bridge jobs list [--active] [-C ROOT] [--queue-dir PATH] [--allow-non-git-root] [--json]
+agy-bridge ps [--all] [-C ROOT] [--queue-dir PATH] [--allow-non-git-root] [--json]
 ```
 
-`jobs list` reads existing local metadata without starting AGY, creating storage, or opening queued delegation prompts.
-It lists all implementation jobs for the current user by default. `--repo` filters implementation jobs to that Git
-project and includes the project's `.agy-bridge/queue`. Pass `--queue-dir` with `--repo` to inspect one custom queue
-under the project.
+`jobs` and `jobs list` read existing local metadata without starting AGY, creating storage, or opening queued
+delegation prompts. `ps` shows live work by default and `ps --all` includes job history. `-C` and `--repo` select a
+project and include its delegation queue. Use `--queue-dir` for a custom queue. Use the explicit
+`--allow-non-git-root` option to inspect a legacy delegation queue rooted in a non-Git project.
 
 `--active` selects jobs with a live worker. It includes implementation jobs in `queued`, `running`, `checking`, or
 `cancel_requested` while their worker holds the lock, and the current job of a running delegation queue. Pending queue
 entries and an idle watcher do not count as active jobs. For a worker that exits before recording a result, the phase
-is `interrupted` and the job is inactive.
+is `interrupted` and the job is inactive. Use `jobs show` for a job in the foreground `applying` phase, which is
+outside the active-worker filter.
 
 With `--json`, stdout contains a single JSON object with `schema_version`, `jobs`, and `warnings`. The current schema
 version is `1`. Each job includes `kind` (`implement` or `delegate`), `job_id`, `repository`, `phase`, `active`, and
-`cancel_requested`. The `queue_dir`, `created_at`, `updated_at`, `started_at`, `last_agy_activity_at`, `attempt`, and
+`cancel_requested`. Inventory displays `cancel_requested` as the phase while detailed status keeps the worker phase
+and sets the boolean flag. The `queue_dir`, `created_at`, `updated_at`, `started_at`, `last_agy_activity_at`, `attempt`, and
 `bridge_exit` fields are `null` when unavailable. Timestamps are Unix seconds. Jobs with live workers appear first,
 then by most recently updated. Warnings describe entries the inventory could not read safely.
 
 An empty inventory is successful. The text output shows `No jobs.` or `No active jobs.` and sends warnings to stderr.
-Use `implement-status <job-id>` for detailed implementation state. `status` and `queue status` retain their queue
+Use `jobs show <job-id>` for detailed implementation state. `status` and `queue status` retain their queue
 report format. [Queue commands](QUEUE.md).
+
+Every command with `--repo` also accepts `-C`. File selection in `delegate`, `dry-run`, and `jobs start` accepts
+`-f` as a shortcut for `--file`.
 
 ## Implementation jobs
 
 ```text
-bin/agy-bridge implement [--repo <root>] [--file <path>...] [--glob <pattern>...]
-                         [--write-dir <dir>...] [--model <name>] [--profile <absolute path>]
-                         [--gemini-api-key] [--check <JSON argv>]
-                         [--turn-timeout 25m] [--job-timeout 2h] [--dry-run] [--foreground]
-                         -- "<task>"
-bin/agy-bridge implement-status <job-id>
-bin/agy-bridge implement-patch <job-id>
-bin/agy-bridge implement-cancel <job-id>
-bin/agy-bridge implement-resume <job-id> [--foreground]
-bin/agy-bridge implement-apply <job-id> --sha256 <reviewed patch hash>
+agy-bridge jobs start [-C ROOT] [-f PATH]... [--glob PATTERN]... [--write-dir DIR]...
+                      [--profile PATH] [--gemini-api-key] [--check JSON_ARGV]
+                      [--model NAME] [--turn-timeout 25m] [--job-timeout 2h]
+                      [--dry-run] [--foreground] -- "<task>"
+agy-bridge jobs show <job-id>
+agy-bridge jobs patch <job-id>
+agy-bridge jobs cancel <job-id>
+agy-bridge jobs resume <job-id> [--foreground]
+agy-bridge jobs apply <job-id> --sha256 <reviewed patch hash>
 ```
 
-`implement --dry-run` prints a JSON manifest from the current bytes selected by `--file` and `--glob`. It needs a Git
-project and at least one matching file. A dry run makes no AGY call and creates no job. A submitted job requires an
+`implement` and the `implement-*` names remain CLI entry points for the same operations. `jobs status` is an alias
+for `jobs show`. `jobs start --dry-run` prints a JSON manifest from the current bytes selected by `--file` and
+`--glob`. It needs a Git project and at least one matching file. A dry run makes no AGY call and creates no job. A submitted job requires an
 absolute `--profile` path to a dedicated directory with mode `0700`. `--gemini-api-key` opts into forwarding the
 existing environment variable `GEMINI_API_KEY`. The option is saved with the job. Supply `GEMINI_API_KEY` in the
 environment again when resuming that job.
@@ -74,17 +81,18 @@ invocation. Resume starts a new invocation of the same job. [Setup and examples]
 
 | Command or phase | Output and meaning |
 |---|---|
-| `implement`, `implement-resume` | Background start returns a JSON job ID and `queued`. `--foreground` waits and returns the worker exit code. |
-| `implement-status` | JSON phase, `worker_active`, `cancel_requested`, Git base, attempt, available timestamps, recorded check exit codes, change list, and patch hash. |
-| `implement-cancel` | Requests cancellation for the current invocation and returns `cancel_requested`. Check status for the outcome. |
-| `implement-patch` | Writes the saved unified diff to stdout after checking its hash. Partial patches can be inspected once saved. |
+| `jobs start`, `jobs resume` | Background start returns a JSON job ID and `queued`. `--foreground` waits and returns the worker exit code. |
+| `jobs show` | JSON phase, `worker_active`, `cancel_requested`, Git base, attempt, available timestamps, recorded check exit codes, change list, and patch hash. |
+| `jobs cancel` | Requests cancellation for the current invocation and returns `cancel_requested`. Check status for the outcome. |
+| `jobs patch` | Writes the saved unified diff to stdout after checking its hash. Partial patches can be inspected once saved. |
 | `ready`, `verified` | A patch is available for review. `verified` also records a successful configured check. |
 | `checks_failed`, `no_changes` | The check failed after retries, or there were no file changes. |
-| `canceled`, `timed_out`, `quota`, `auth_required`, `interrupted`, `failed` | The worker stopped. Resume can continue from the retained workspace. |
-| `implement-apply`, `applied` | Applies a `ready` or `verified` patch after matching the supplied hash and source preimages. The working tree receives the files. |
+| `canceled`, `timed_out`, `quota`, `auth_required`, `interrupted`, `failed` | The worker stopped. Resume can continue from the retained workspace unless subprocess cleanup was unconfirmed. |
+| `applying` | Apply started. Use the same job ID and reviewed SHA-256 to resume an interrupted apply. |
+| `jobs apply`, `applied` | Checks the approved hash and file contents, then writes the reviewed patch to the working tree. |
 
 Background commands report submission success independently of the eventual job outcome. For a finished job,
-`implement-status` shows `bridge_exit` when the worker recorded one. `check_exit` is the check's own exit code.
+`jobs show` shows `bridge_exit` when the worker recorded one. `check_exit` is the check's own exit code.
 Application writes the source working tree. Use Git to stage the resulting files. Job state and patch files live
 under `~/.agy-bridge/implement/`.
 

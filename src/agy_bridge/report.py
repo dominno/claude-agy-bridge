@@ -24,7 +24,7 @@ def clean_answer(raw: bytes, preserve_lines: bool = False) -> str:
 
 def classify(result: RunResult, answer: str) -> int:
     """Map a finished run to an exit code (plan section 4)."""
-    if result.timed_out:
+    if result.timed_out or result.err_markers.get("provider_timeout", False):
         return config.EXIT_TIMEOUT
     if result.err_markers["soft_deny"]:
         return config.EXIT_SOFT_DENY

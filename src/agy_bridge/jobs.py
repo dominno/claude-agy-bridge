@@ -32,15 +32,30 @@ class JobView:
 
 def add_arguments(subparsers):
     group = subparsers.add_parser('jobs', help='inspect local background jobs', allow_abbrev=False)
-    commands = group.add_subparsers(dest='jobs_command', required=True)
+    group.set_defaults(handler=dispatch, active=False, repo=None, queue_dir=None, json=False,
+                       allow_non_git_root=False)
+    commands = group.add_subparsers(dest='jobs_command')
     listing = commands.add_parser('list', help='list implementation jobs and a selected delegation queue',
                                   allow_abbrev=False)
-    listing.set_defaults(handler=dispatch)
-    listing.add_argument('--active', action='store_true', help='show only work with a live worker')
-    listing.add_argument('--repo', metavar='ROOT',
-                         help='filter implementation jobs and include the delegation queue for this repository')
-    listing.add_argument('--queue-dir', metavar='PATH', help='select a delegation queue under --repo')
-    listing.add_argument('--json', action='store_true', help='emit a versioned JSON inventory')
+    _inventory_arguments(listing)
+    active = subparsers.add_parser('ps', help='show active local jobs', allow_abbrev=False)
+    _inventory_arguments(active, active_default=True)
+    return commands
+
+
+def _inventory_arguments(parser, *, active_default=False):
+    parser.set_defaults(handler=dispatch)
+    if active_default:
+        parser.add_argument('--all', dest='active', action='store_false', default=True,
+                            help='also show jobs without a live worker')
+    else:
+        parser.add_argument('--active', action='store_true', help='show only work with a live worker')
+    parser.add_argument('-C', '--repo', metavar='ROOT',
+                        help='filter implementation jobs and include the delegation queue for this repository')
+    parser.add_argument('--queue-dir', metavar='PATH', help='select a delegation queue under --repo')
+    parser.add_argument('--allow-non-git-root', action='store_true',
+                        help='allow --repo to select a delegation queue without a .git entry')
+    parser.add_argument('--json', action='store_true', help='emit a versioned JSON inventory')
 
 
 def _timestamp(value):
@@ -59,15 +74,19 @@ def _public_path(path):
 
 
 def list_jobs(*, repository: str | None = None, queue_dir: str | None = None,
-              active_only: bool = False) -> tuple[list[JobView], list[str]]:
+              active_only: bool = False, allow_non_git_root: bool = False) -> tuple[list[JobView], list[str]]:
     """Join the private implementation store and, when selected, one repository queue."""
     from . import jobstore, queue
 
-    if queue_dir is not None and repository is None:
-        raise config.UsageError('--queue-dir requires --repo')
-    if repository is not None:
+    location = None
+    if repository is None:
+        if queue_dir is not None:
+            raise config.UsageError('--queue-dir requires --repo')
+        if allow_non_git_root:
+            raise config.UsageError('--allow-non-git-root requires --repo')
+    else:
         repository = stage.resolve_repo(repository)
-        stage.check_root(repository)
+        location = queue.QueueLocation(repository, queue_dir=queue_dir, allow=allow_non_git_root)
 
     jobs = []
     warnings = []
@@ -88,17 +107,16 @@ def list_jobs(*, repository: str | None = None, queue_dir: str | None = None,
             attempt=summary.get('attempt'), bridge_exit=summary.get('bridge_exit'),
         ))
 
-    if repository is not None:
+    if location is not None:
         try:
-            paths = queue.Paths(repository, queue_dir=queue_dir)
-            queue_jobs, queue_warnings = queue.list_jobs(paths)
+            queue_jobs, queue_warnings = queue.list_jobs(location)
         except OSError:
             warnings.append('delegation queue could not be read safely')
         else:
             warnings.extend(queue_warnings)
             jobs.extend(JobView(
-                kind='delegate', job_id=row['id'], repository=_public_path(repository),
-                queue_dir=_public_path(paths.queue), phase=row['phase'], active=row['active'],
+                kind='delegate', job_id=row['id'], repository=_public_path(location.root),
+                queue_dir=_public_path(location.queue), phase=row['phase'], active=row['active'],
                 created_at=_timestamp(row.get('created_at')), updated_at=_timestamp(row.get('updated_at')),
                 started_at=_timestamp(row.get('started_at')),
             ) for row in queue_jobs)
@@ -112,7 +130,8 @@ def list_jobs(*, repository: str | None = None, queue_dir: str | None = None,
 
 def dispatch(args):
     try:
-        jobs, warnings = list_jobs(repository=args.repo, queue_dir=args.queue_dir, active_only=args.active)
+        jobs, warnings = list_jobs(repository=args.repo, queue_dir=args.queue_dir, active_only=args.active,
+                                   allow_non_git_root=args.allow_non_git_root)
     except config.UsageError as exc:
         print('agy-bridge: ' + stage.printable(str(exc)), file=sys.stderr)
         return config.EXIT_USAGE

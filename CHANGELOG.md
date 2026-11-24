@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- `ps` shows live jobs, `jobs` lists history, and `jobs start/show/patch/cancel/resume/apply` group the implementation
+  workflow under one command. The existing command spellings remain callable.
+- Job inventory accepts the selected legacy queue's location and the explicit `--allow-non-git-root` option.
+- Patch application uses canonical scratch paths and records recovery information for an interrupted apply.
+- Offline sandbox startup failures stop implementation instead of becoming code feedback. Provider timeouts are
+  reported as timeouts by read-only delegation.
+
 ## 0.2.0
 
 - `implement` and `/agy:implement` run AGY edits in a private Linux Bubblewrap workspace. Jobs support offline checks,

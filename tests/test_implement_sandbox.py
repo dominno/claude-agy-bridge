@@ -37,11 +37,11 @@ def test_agent_mounts_only_candidate_and_dedicated_profile(bubblewrap, areas, mo
 
 def test_test_process_uses_private_networkless_home(bubblewrap, areas):
     tree, profile = areas
-    cmd = edit_sandbox._test_command(['python3', '-m', 'pytest'], str(tree))
+    cmd = edit_sandbox._test_command(['python3', '-m', 'pytest'], str(tree), status_fd=9)
     assert '--unshare-all' in cmd and '--share-net' not in cmd and '--clearenv' in cmd
     assert cmd[cmd.index('--tmpfs', cmd.index('--tmpfs') + 1) + 1] == '/home/agy'
     assert str(profile) not in cmd
-    assert cmd[-4:] == ['--', 'python3', '-m', 'pytest']
+    assert cmd[-6:] == ['--json-status-fd', '9', '--', 'python3', '-m', 'pytest']
 
 
 def test_profile_refuses_loose_permissions_and_extension_settings(areas):
@@ -78,16 +78,82 @@ def test_verification_stream_has_bounded_tail_and_cancels(tmp_path):
     assert edit_sandbox._run(argv, tmp_path, {}, 0.1, None) == (124, 'timeout after 0.1s')
 
 
+@pytest.mark.parametrize('exit_code', [0, 1, 124, 126, 127])
+def test_offline_check_classifies_a_real_exit_by_the_private_status_channel(areas, monkeypatch, exit_code):
+    tree, _ = areas
+
+    def wrap(argv, wrapped_tree, status_fd):
+        assert argv == ['example-check'] and wrapped_tree == str(tree.resolve())
+        program = (
+            'import os, sys; '
+            'os.write(int(sys.argv[1]), b\'{"child-pid": 123}\\n{"exit-code": %d}\\n\'); '
+            'print("bwrap: synthetic test text"); '
+            'sys.exit(%d)' % (exit_code, exit_code)
+        )
+        return [sys.executable, '-I', '-S', '-c', program, str(status_fd)]
+
+    monkeypatch.setattr(edit_sandbox, '_test_command', wrap)
+    assert edit_sandbox.run_test(['example-check'], tree=tree, timeout_s=5) == (
+        exit_code, 'bwrap: synthetic test text\n',
+    )
+
+
+@pytest.mark.parametrize('status', [b'', b'{"child-pid": 123}\n',
+                                   b'{"child-pid": 123}\n{"exit-code": 0}\n'])
+def test_unconfirmed_check_launch_is_infrastructure_failure(areas, monkeypatch, status):
+    tree, _ = areas
+
+    def wrap(_argv, _tree, status_fd):
+        program = (
+            'import os, sys; '
+            'os.write(int(sys.argv[1]), %r); '
+            'print(\'{"exit-code": 1}\'); '
+            'sys.exit(1)' % status
+        )
+        return [sys.executable, '-I', '-S', '-c', program, str(status_fd)]
+
+    monkeypatch.setattr(edit_sandbox, '_test_command', wrap)
+    with pytest.raises(edit_sandbox.InfrastructureError, match='could not confirm'):
+        edit_sandbox.run_test(['example-check'], tree=tree, timeout_s=5)
+
+
+def test_offline_check_supervisor_timeout_and_cancel_keep_existing_results(areas, monkeypatch):
+    tree, _ = areas
+    monkeypatch.setattr(edit_sandbox, '_test_command',
+                        lambda *_: [sys.executable, '-c', 'import time; time.sleep(30)'])
+    assert edit_sandbox.run_test(['example-check'], tree=tree, timeout_s=5, should_cancel=lambda: True)[0] == 130
+    assert edit_sandbox.run_test(['example-check'], tree=tree, timeout_s=0.1)[0] == 124
+
+
+def test_offline_preflight_only_runs_trusted_probe(areas, monkeypatch):
+    tree, _ = areas
+
+    def probe(argv, **kwargs):
+        assert argv == ['/bin/true']
+        assert kwargs['tree'] == tree
+        assert kwargs['timeout_s'] == edit_sandbox.PREFLIGHT_TIMEOUT_S
+        return 0, ''
+
+    monkeypatch.setattr(edit_sandbox, 'run_test', probe)
+    assert edit_sandbox.preflight_test(tree=tree, timeout_s=30) == (0, '')
+
+
 @pytest.mark.skipif(not sys.platform.startswith('linux'), reason='implementation sandbox uses Linux namespaces')
 def test_linux_namespace_mounts_and_network(areas, tmp_path):
     tree, profile = areas
     if not sandbox.executable('bwrap', '/usr/bin:/bin'):
         pytest.skip('Bubblewrap is unavailable')
-    code, detail = edit_sandbox.run_test(['true'], tree=tree, timeout_s=5)
+    # Determine host namespace support using the raw, trusted pre-test. The
+    # production check never uses these diagnostic strings to classify exits.
+    code, detail = edit_sandbox._run(edit_sandbox._test_command(['/bin/true'], str(tree)), tree, {}, 5, None)
     if code and any(message in detail for message in ('uid map', 'creating new namespace',
                                                      'No permissions to create a new namespace')):
         pytest.skip(detail.strip())
     assert code == 0, detail
+    assert edit_sandbox.run_test(['/bin/true'], tree=tree, timeout_s=5) == (0, '')
+    assert edit_sandbox.run_test(['/bin/sh', '-c', 'exit 127'], tree=tree, timeout_s=5) == (127, '')
+    with pytest.raises(edit_sandbox.InfrastructureError):
+        edit_sandbox.run_test(['agy-bridge-missing-check-for-test'], tree=tree, timeout_s=5)
 
     host_file = tmp_path / 'host-file'
     host_file.write_text('external')

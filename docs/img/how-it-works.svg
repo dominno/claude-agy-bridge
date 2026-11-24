@@ -20,7 +20,7 @@
       <rect x="402" y="277" width="260" height="43" rx="7" fill="#eaf0f7"/>
       <text x="418" y="305">/agy:dry-run</text>
       <rect x="674" y="277" width="448" height="43" rx="7" fill="#eaf0f7"/>
-      <text x="690" y="305">implement --dry-run</text>
+      <text x="690" y="305">jobs start --dry-run</text>
     </g>
     <text x="78" y="353" font-size="19" fill="#334155">Check the file manifest and omissions. Google can process the selected files and task text.</text>
 
@@ -75,23 +75,23 @@
     <text x="76" y="1033" font-size="16" fill="#475569">macOS or Linux</text>
 
     <rect x="643" y="976" width="467" height="38" rx="7" fill="#183e37"/>
-    <text x="657" y="1001" font-family="DejaVu Sans Mono, monospace" font-size="16" fill="#f2fffb">implement-apply &lt;job&gt; --sha256 &lt;hash&gt;</text>
+    <text x="657" y="1001" font-family="DejaVu Sans Mono, monospace" font-size="16" fill="#f2fffb">jobs apply &lt;job&gt; --sha256 &lt;hash&gt;</text>
     <text x="643" y="1041" font-size="16" fill="#475569">Linux · Bubblewrap · AGY 1.5.16+ (major version 1)</text>
 
     <rect x="46" y="1104" width="1108" height="150" rx="18" fill="#fff" stroke="#d0dae6" stroke-width="2"/>
     <text x="78" y="1146" font-size="25" font-weight="700">Find active jobs across projects</text>
     <rect x="78" y="1165" width="310" height="41" rx="7" fill="#eaf0f7"/>
-    <text x="93" y="1192" font-family="DejaVu Sans Mono, monospace" font-size="19" fill="#1e3a5f">jobs list --active</text>
+    <text x="93" y="1192" font-family="DejaVu Sans Mono, monospace" font-size="19" fill="#1e3a5f">agy-bridge ps</text>
     <text x="409" y="1192" font-size="18" fill="#334155">Lists the current user's live implementation jobs.</text>
-    <text x="78" y="1230" font-size="18" fill="#334155">Add --repo PATH to include that repository's delegation queue. Use --json for tools.</text>
+    <text x="78" y="1230" font-size="18" fill="#334155">Add -C PATH to include that repository's delegation queue. Use --json for tools.</text>
 
     <rect x="46" y="1280" width="1108" height="110" rx="18" fill="#12243a"/>
     <text x="78" y="1320" font-size="22" font-weight="700" fill="#fff">Manage an implementation job by ID</text>
     <g font-family="DejaVu Sans Mono, monospace" font-size="18" fill="#d8f3eb">
-      <text x="78" y="1356">implement-status</text>
-      <text x="332" y="1356">implement-patch</text>
-      <text x="589" y="1356">implement-cancel</text>
-      <text x="850" y="1356">implement-resume</text>
+      <text x="78" y="1356">jobs show</text>
+      <text x="332" y="1356">jobs patch</text>
+      <text x="589" y="1356">jobs cancel</text>
+      <text x="850" y="1356">jobs resume</text>
     </g>
   </g>
 </svg>

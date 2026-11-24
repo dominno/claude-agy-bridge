@@ -99,7 +99,15 @@ def parse_duration(text: str, *, max_seconds: int = MAX_TIMEOUT_S, label: str = 
     if not match:
         examples = '90s, 30m or 2h' if label == 'job timeout' else '90, 90s, 5m or 1h'
         raise UsageError(f'{label} must look like {examples}')
-    seconds = int(match.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600}[match.group(2)]
+    multiplier = {"": 1, "s": 1, "m": 60, "h": 3600}[match.group(2)]
+    limit = max_seconds // multiplier
+    amount = 0
+    # Bound numeric conversion even when Python's integer digit limit is disabled.
+    for digit in match.group(1):
+        amount = amount * 10 + int(digit)
+        if amount > limit:
+            break
+    seconds = amount * multiplier
     if not 1 <= seconds <= max_seconds:
         maximum = {3600: '1 hour', 24 * 3600: '24 hours'}.get(max_seconds, f'{max_seconds} seconds')
         raise UsageError(f'{label} must be between 1 second and {maximum}')

@@ -8,6 +8,7 @@ import json
 import os
 import re
 import stat
+import sys
 import time
 
 from . import config, safety, stage, verdicts
@@ -74,12 +75,51 @@ def context_files(root, job):
     return files
 
 
-class Paths:
-    def __init__(self, root, queue_dir=None, results_dir=None, allow=False):
+class QueueLocation:
+    """Locate one queue and read its runner metadata independently of result paths."""
+
+    def __init__(self, root, queue_dir=None, allow=False):
         self.root = root
-        self.allow = allow
         stage.check_root(root, allow)
         self.queue = safety.local(root, queue_dir or '.agy-bridge/queue', metadata=True)
+
+    def running(self):
+        try:
+            with safety.directory(os.path.join(self.root, self.queue)) as parent:
+                fd = os.open('watcher.pid', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        except FileNotFoundError:
+            return None
+        try:
+            safety.regular(fd)
+            try:
+                # Other readers can hold shared locks, but only a runner holds this lock exclusively.
+                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raw = os.read(fd, 8192)
+                try:
+                    row = json.loads(raw) if raw else {}
+                    if (not isinstance(row, dict) or type(row.get('pid')) is not int or row['pid'] < 1 or
+                            row.get('mode') not in ('watch', 'run')):
+                        return dict(pid='unknown', mode='unknown')
+                    watcher = dict(pid=row['pid'], mode=row['mode'])
+                    if row.get('job') is not None:
+                        job = verdicts.name(row['job'])
+                        started = row.get('started')
+                        if type(started) not in (int, float) or not 0 <= started <= sys.float_info.max:
+                            started = None
+                        watcher.update(job=job, started=started)
+                    return watcher
+                except (ValueError, config.UsageError, RecursionError):
+                    return dict(pid='unknown', mode='unknown')
+            return None
+        finally:
+            os.close(fd)
+
+
+class Paths(QueueLocation):
+    def __init__(self, root, queue_dir=None, results_dir=None, allow=False):
+        super().__init__(root, queue_dir, allow)
+        self.allow = allow
         self.results = safety.local(root, results_dir or '.agy-bridge/results', metadata=True)
         # These folders must not overlap: job moves/results must have distinct destinations.
         if self.queue == self.results or self.queue.startswith(self.results+'/') or self.results.startswith(self.queue+'/'):
@@ -156,36 +196,6 @@ class Paths:
         os.ftruncate(self.lock_fd, 0)
         os.write(self.lock_fd, json.dumps(row).encode())
         os.fsync(self.lock_fd)
-
-    def running(self):
-        try:
-            with safety.directory(os.path.join(self.root, self.queue)) as parent:
-                fd = os.open('watcher.pid', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
-        except FileNotFoundError:
-            return None
-        try:
-            safety.regular(fd)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raw = os.read(fd, 8192)
-                try:
-                    row = json.loads(raw) if raw else {}
-                    if (not isinstance(row, dict) or type(row.get('pid')) is not int or row['pid'] < 1 or
-                            row.get('mode') not in ('watch', 'run')):
-                        return dict(pid='unknown', mode='unknown')
-                    watcher = dict(pid=row['pid'], mode=row['mode'])
-                    if row.get('job') is not None:
-                        job = verdicts.name(row['job'])
-                        started = row.get('started')
-                        if type(started) in (int, float) and 0 <= started < float('inf'):
-                            watcher.update(job=job, started=started)
-                    return watcher
-                except (ValueError, config.UsageError, RecursionError):
-                    return dict(pid='unknown', mode='unknown')
-            return None
-        finally:
-            os.close(fd)
 
     def exists(self, rel):
         try:
@@ -444,6 +454,8 @@ def snapshot(paths):
         warnings.append('queue watcher metadata could not be read safely')
     if watcher and watcher['pid'] == 'unknown':
         warnings.append('active queue watcher metadata is unreadable')
+    elif watcher and watcher.get('job') is not None and watcher['started'] is None:
+        warnings.append('active queue job start time is unreadable')
 
     jobs = {}
     invalid = False
@@ -498,8 +510,8 @@ def status(paths, threshold=300):
     out = ['watcher: '+('running (pid %s, %s)' % (active.get('pid'),active.get('mode')) if active else 'stopped')]
     for label,rel in [('pending',paths.queue),('done',paths.queue+'/done'),('failed',paths.queue+'/failed')]:
         out.append('%s: %d' % (label,len(paths.names(rel,'.job'))))
-    if active and active.get('job'):
-        duration = max(0,time.time()-active.get('started',time.time()))
+    if active and active.get('job') and active.get('started') is not None:
+        duration = max(0,time.time()-active['started'])
         out.append('running: %s (%.1fs%s)' % (active['job'],duration,', exceeds threshold' if duration>threshold else ''))
     results = paths.names(paths.results,'.md')
     latest = None

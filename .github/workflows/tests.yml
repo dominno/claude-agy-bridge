@@ -47,3 +47,4 @@ jobs:
           cd "$RUNNER_TEMP"
           agy-bridge --version
           python -I -m agy_bridge --version
+          HOME="$RUNNER_TEMP/agy-bridge-smoke-home" agy-bridge ps --json

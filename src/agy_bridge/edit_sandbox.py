@@ -10,6 +10,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 
 from . import config, sandbox, stage
@@ -20,11 +21,16 @@ GUEST_TREE = '/workspace'
 GUEST_AGY = '/opt/agy/bin/agy'
 SYSTEM_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 TEST_OUTPUT_TAIL = 8192
+MAX_BWRAP_STATUS_BYTES = 4096
 PREFLIGHT_TIMEOUT_S = 15
 
 
 class Unavailable(config.UsageError):
     """A required OS isolation feature is unavailable."""
+
+
+class InfrastructureError(Unavailable):
+    """The offline check sandbox did not launch its executable successfully."""
 
 
 class DeadlineExceeded(config.UsageError):
@@ -167,8 +173,10 @@ def agent_command(argv, *, tree, profile):
     return command + _workspace_args(tree) + ['--', GUEST_AGY, *argv[1:]]
 
 
-def _test_command(argv, tree):
+def _test_command(argv, tree, status_fd=None):
     command = _bwrap_args(network=False) + ['--tmpfs', GUEST_PROFILE] + _workspace_args(tree)
+    if status_fd is not None:
+        command += ['--json-status-fd', str(status_fd)]
     return command + ['--', *argv]
 
 
@@ -183,7 +191,7 @@ def _terminate(proc):
         raise CleanupError('implementation sandbox did not exit after SIGKILL and the cleanup deadline') from None
 
 
-def _run(argv, tree, env, timeout_s, should_cancel, deadline=None):
+def _run(argv, tree, env, timeout_s, should_cancel, deadline=None, *, pass_fds=(), verify_exit=None):
     started = time.monotonic()
     end = execution_deadline(started, timeout_s, deadline)
     if should_cancel is not None and should_cancel():
@@ -193,7 +201,7 @@ def _run(argv, tree, env, timeout_s, should_cancel, deadline=None):
     # Popen's context manager performs an unbounded wait on a normal exception.
     # Close the stream explicitly, even when a killed process cannot be reaped.
     proc = subprocess.Popen(argv, cwd=tree, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+                            stderr=subprocess.STDOUT, start_new_session=True, close_fds=True, pass_fds=pass_fds)
     tail = bytearray()
     try:
         with selectors.DefaultSelector() as selector:
@@ -212,6 +220,8 @@ def _run(argv, tree, env, timeout_s, should_cancel, deadline=None):
                     tail.extend(data)
                     if len(tail) > TEST_OUTPUT_TAIL:
                         del tail[:-TEST_OUTPUT_TAIL]
+        if verify_exit is not None:
+            verify_exit(proc.returncode)
         return proc.returncode, tail.decode('utf-8', 'replace')
     finally:
         try:
@@ -239,6 +249,24 @@ def preflight(*, tree, profile, exe, should_cancel=None, deadline=None):
     return detail
 
 
+def _verify_test_exit(status_file, returncode):
+    # Bubblewrap closes this status descriptor in its child, then writes the
+    # terminal exit record from the monitor only after a successful exec.
+    status_file.seek(0)
+    data = status_file.read(MAX_BWRAP_STATUS_BYTES + 1)
+    error = InfrastructureError('offline check sandbox could not confirm that its executable started')
+    try:
+        if len(data) > MAX_BWRAP_STATUS_BYTES:
+            raise error
+        start, end = (json.loads(line) for line in data.splitlines())
+    except (ValueError, RecursionError):
+        raise error from None
+    if (not isinstance(start, dict) or type(start.get('child-pid')) is not int or start['child-pid'] < 1 or
+            not isinstance(end, dict) or type(end.get('exit-code')) is not int or
+            not 0 <= end['exit-code'] <= 255 or end['exit-code'] != returncode):
+        raise error
+
+
 def run_test(argv, *, tree, timeout_s, should_cancel=None, deadline=None):
     """Run one trusted argv in a writable disposable test tree, offline."""
     end = execution_deadline(time.monotonic(), timeout_s, deadline)
@@ -248,6 +276,22 @@ def run_test(argv, *, tree, timeout_s, should_cancel=None, deadline=None):
     if argv[0].startswith('/') and Path(argv[0]).parent not in map(Path, SYSTEM_PATH.split(':')):
         raise config.UsageError('use a system test executable or a workspace-relative path')
     try:
-        return _run(_test_command(argv, tree), tree, {}, timeout_s, should_cancel, end)
-    except OSError as exc:
-        raise _unavailable('could not start Bubblewrap: %s' % exc.strerror) from None
+        with tempfile.TemporaryFile() as status_file:
+            status_fd = status_file.fileno()
+            return _run(_test_command(argv, tree, status_fd), tree, {}, timeout_s, should_cancel, end,
+                        pass_fds=(status_fd,), verify_exit=lambda rc: _verify_test_exit(status_file, rc))
+    except OSError:
+        raise InfrastructureError('could not start or supervise the offline check sandbox') from None
+    except Unavailable as exc:
+        if isinstance(exc, (InfrastructureError, CleanupError)):
+            raise
+        raise InfrastructureError(str(exc)) from None
+
+
+def preflight_test(*, tree, timeout_s, should_cancel=None, deadline=None):
+    """Verify offline check infrastructure with a trusted system executable."""
+    code, output = run_test(['/bin/true'], tree=tree, timeout_s=min(timeout_s, PREFLIGHT_TIMEOUT_S),
+                            should_cancel=should_cancel, deadline=deadline)
+    if code not in (0, 124, 130):
+        raise InfrastructureError('the offline check sandbox probe failed')
+    return code, output

@@ -15,8 +15,10 @@ import uuid
 from . import config, safety
 
 ACTIVE = frozenset({'queued', 'running', 'checking'})
-PHASES = ACTIVE | {'prepared', 'verified', 'ready', 'applied', 'checks_failed', 'no_changes',
-                   'canceled', 'timed_out', 'quota', 'auth_required', 'interrupted', 'failed'}
+REVIEWABLE = frozenset({'verified', 'ready'})
+APPLY_PHASES = REVIEWABLE | {'applying', 'applied'}
+PHASES = ACTIVE | APPLY_PHASES | {'prepared', 'checks_failed', 'no_changes', 'canceled', 'timed_out', 'quota',
+                                 'auth_required', 'interrupted', 'failed'}
 ID = re.compile(r'[0-9a-f]{32}\Z')
 SHA256 = re.compile(r'[0-9a-f]{64}\Z')
 MAX_STATE = 2 * 1024 * 1024
@@ -182,6 +184,8 @@ def _read_state(parent, job_id):
     if 'changes' in state and (not isinstance(state['changes'], list) or any(
             not _is_string_list(change) or len(change) != 2 for change in state['changes'])):
         raise InvalidState('invalid implementation change list')
+    if phase in APPLY_PHASES and not (state.get('changes') and digest):
+        raise InvalidState('completed implementation patch state is missing')
     return cast(JobState, state)
 
 
@@ -204,8 +208,6 @@ def load(job):
     if not isinstance(manifest, list) or not manifest or any(not isinstance(entry, dict) or
             not isinstance(entry.get('path'), str) for entry in manifest):
         raise InvalidState('invalid implementation job manifest')
-    if state['phase'] in {'ready', 'verified', 'applied'} and not (state.get('changes') and state.get('patch_sha256')):
-        raise InvalidState('completed implementation patch state is missing')
     return state
 
 
@@ -216,12 +218,18 @@ def lock(job):
         fd = os.open('lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=parent)
         try:
             safety.regular(fd)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                yield None
-            else:
-                yield fd
+            # An inventory probe holds a shared lock only long enough to test liveness.
+            deadline = time.monotonic() + .2
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        yield None
+                        return
+                    time.sleep(.02)
+            yield fd
         finally:
             # A detached worker can still hold the same open file description.
             os.close(fd)

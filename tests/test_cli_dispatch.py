@@ -1,3 +1,4 @@
+import json
 import os
 
 from agy_bridge import config, edit_sandbox, runner
@@ -9,6 +10,21 @@ def test_status_does_not_accept_all_as_an_abbreviation(h):
     assert result.returncode == config.EXIT_USAGE
     assert 'unrecognized arguments: --all' in result.stderr
     assert '_implement-worker' not in h.raw('--help').stdout
+
+
+def test_grouped_start_dry_run_matches_legacy_command(h):
+    flags = ['--dry-run', '--', 'Fix the parser']
+    grouped = h.raw('jobs', 'start', '-C', str(h.repo), '-f', 'src/a.py', *flags)
+    legacy = h.raw('implement', '--repo', str(h.repo), '--file', 'src/a.py', *flags)
+
+    assert grouped.returncode == legacy.returncode == config.EXIT_OK
+    assert json.loads(grouped.stdout) == json.loads(legacy.stdout)
+
+
+def test_grouped_apply_requires_reviewed_digest(h):
+    result = h.raw('jobs', 'apply', 'a' * 32)
+    assert result.returncode == config.EXIT_USAGE
+    assert 'the following arguments are required: --sha256' in result.stderr
 
 
 def test_implementation_doctor_checks_version_inside_sandbox(h, monkeypatch, capsys):
@@ -25,7 +41,7 @@ def test_implementation_doctor_checks_version_inside_sandbox(h, monkeypatch, cap
         return '1.5.16'
 
     monkeypatch.setattr(edit_sandbox, 'preflight', preflight)
-    flags = ['doctor', '--implementation', '--repo', str(h.repo), '--profile', str(profile)]
+    flags = ['doctor', '--implementation', '-C', str(h.repo), '--profile', str(profile)]
     assert main(flags) == config.EXIT_OK
     assert calls == [(str(profile.resolve()), executable)]
     assert 'agy 1.5.16' in capsys.readouterr().out

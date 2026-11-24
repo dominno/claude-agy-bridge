@@ -34,8 +34,8 @@ def _parser() -> argparse.ArgumentParser:
     for name in ("delegate", "dry-run"):
         d = sub.add_parser(name)
         d.set_defaults(handler=cmd_delegate)
-        d.add_argument("--repo", default=".", help="repository root (default: current folder)")
-        d.add_argument("--file", action="append", default=[], help="file to include (repeatable)")
+        d.add_argument("-C", "--repo", default=".", help="repository root (default: current folder)")
+        d.add_argument("-f", "--file", action="append", default=[], help="file to include (repeatable)")
         d.add_argument("--glob", action="append", default=[], help="glob inside the repo (repeatable)")
         d.add_argument("--model")
         d.add_argument("--cite", action="store_true", help="check source quotations in every answer line")
@@ -54,17 +54,17 @@ def _parser() -> argparse.ArgumentParser:
         d.add_argument("task", nargs="*", help='put the task after "--"')
     ev = sub.add_parser("events")
     ev.set_defaults(handler=cmd_events)
-    ev.add_argument("--repo", default=".")
+    ev.add_argument("-C", "--repo", default=".")
     ev.add_argument("--tail", type=int, default=10)
     ev.add_argument("--allow-non-git-root", action="store_true")
     doc = sub.add_parser("doctor")
     doc.set_defaults(handler=cmd_doctor)
-    doc.add_argument("--repo", help="repository folder; agy must not resolve inside it (the slash command passes it)")
+    doc.add_argument("-C", "--repo", help="repository folder; agy must resolve outside it")
     doc.add_argument("--offline", action="store_true", help="skip the check that needs network and sign-in")
     doc.add_argument("--implementation", action="store_true", help="probe AGY inside the implementation sandbox")
     doc.add_argument("--profile", help="dedicated AGY home for the implementation probe")
     def repo_options(parser, folders=False):
-        parser.add_argument('--repo', default='.')
+        parser.add_argument('-C', '--repo', default='.')
         parser.add_argument('--allow-non-git-root', action='store_true')
         if folders:
             parser.add_argument('--queue-dir')
@@ -119,7 +119,7 @@ def _parser() -> argparse.ArgumentParser:
     t.add_argument('--target', type=float, default=180)
     from . import implement, jobs
     implement.add_arguments(sub)
-    jobs.add_arguments(sub)
+    implement.add_job_actions(jobs.add_arguments(sub))
     return p
 
 

@@ -1,18 +1,25 @@
 import argparse
+import fcntl
 import json
 
 from agy_bridge import config, jobs, jobstore, queue
 
 
 def _run(*arguments):
+    return _run_command('jobs', 'list', *arguments)
+
+
+def _run_command(*arguments):
     parser = argparse.ArgumentParser()
     jobs.add_arguments(parser.add_subparsers(required=True))
-    args = parser.parse_args(['jobs', 'list', *arguments])
+    args = parser.parse_args(arguments)
     return args.handler(args)
 
 
-def _repo(path):
-    (path / '.git').mkdir(parents=True)
+def _repo(path, *, git=True):
+    path.mkdir()
+    if git:
+        (path / '.git').mkdir()
     (path / 'source.py').write_text('x = 1\n')
     return path.resolve()
 
@@ -50,7 +57,8 @@ def test_global_filter_and_sanitized_normalized_summary(tmp_path, monkeypatch, c
     assert _run('--json') == 0
     result = capsys.readouterr()
     rendered = json.loads(result.out)
-    assert not result.err and 'private' not in result.out
+    assert not result.err
+    assert all(secret not in result.out for secret in ('private prompt', 'private profile', 'private conversation'))
     assert rendered['schema_version'] == 1
     assert rendered['warnings'] == [f"implementation {'4' * 32}: invalid state"]
     assert [(row['phase'], row['active']) for row in rendered['jobs']] == [
@@ -100,4 +108,100 @@ def test_bad_scope_does_not_read_storage(tmp_path, monkeypatch, capsys):
 
     assert _run('--queue-dir', 'queues/custom') == config.EXIT_USAGE
     assert '--queue-dir requires --repo' in capsys.readouterr().err
+    assert _run('--allow-non-git-root') == config.EXIT_USAGE
+    assert '--allow-non-git-root requires --repo' in capsys.readouterr().err
     assert not (tmp_path / 'bridge-home').exists()
+
+
+def test_inventory_ignores_writer_results_configuration(tmp_path, monkeypatch, capsys):
+    repository = _repo(tmp_path / 'repo')
+    monkeypatch.setattr(config, 'bridge_home', lambda: str(tmp_path / 'bridge-home'))
+    queue_dir = '.agy-bridge/results'
+    paths = queue.Paths(str(repository), queue_dir=queue_dir, results_dir='.agy-bridge/custom-results')
+    paths.add({'name': 'review', 'task': 'review code', 'files': ['source.py']})
+
+    assert _run('-C', str(repository), '--queue-dir', queue_dir, '--json') == 0
+    result = json.loads(capsys.readouterr().out)
+    assert [(row['job_id'], row['queue_dir']) for row in result['jobs']] == [('review', queue_dir)]
+    assert not result['warnings']
+
+
+def test_inventory_respects_non_git_opt_in(tmp_path, monkeypatch, capsys):
+    repository = _repo(tmp_path / 'repo', git=False)
+    monkeypatch.setattr(config, 'bridge_home', lambda: str(tmp_path / 'bridge-home'))
+    paths = queue.Paths(str(repository), allow=True)
+    paths.add({'name': 'review', 'task': 'review code', 'files': ['source.py']})
+
+    assert _run('-C', str(repository), '--json') == config.EXIT_REFUSED
+    assert not capsys.readouterr().out
+    assert _run('-C', str(repository), '--allow-non-git-root', '--json') == 0
+    assert [row['job_id'] for row in json.loads(capsys.readouterr().out)['jobs']] == ['review']
+
+
+def test_inventory_does_not_follow_archive_or_result_symlinks(tmp_path, monkeypatch, capsys):
+    repository = _repo(tmp_path / 'repo')
+    monkeypatch.setattr(config, 'bridge_home', lambda: str(tmp_path / 'bridge-home'))
+    paths = queue.Paths(str(repository))
+    paths.add({'name': 'review', 'task': 'review code', 'files': ['source.py']})
+    external = tmp_path / 'external'
+    external.mkdir()
+    (external / 'should-not-appear.job').write_text('{}')
+    (repository / paths.results).symlink_to(external, target_is_directory=True)
+    (repository / paths.queue / 'done').symlink_to(external, target_is_directory=True)
+
+    assert _run('-C', str(repository), '--json') == 0
+    result = json.loads(capsys.readouterr().out)
+    assert [row['job_id'] for row in result['jobs']] == ['review']
+    assert result['warnings'] == ['some queue entries could not be inspected safely']
+
+
+def test_shared_watcher_probe_does_not_mark_a_stale_job_live(tmp_path):
+    repository = _repo(tmp_path / 'repo')
+    paths = queue.Paths(str(repository))
+    paths.add({'name': 'review', 'task': 'review code', 'files': ['source.py']})
+    watcher = repository / paths.queue / 'watcher.pid'
+    with watcher.open('w') as stream:
+        json.dump({'pid': 42, 'mode': 'watch', 'job': 'review', 'started': 10}, stream)
+        stream.flush()
+        fcntl.flock(stream, fcntl.LOCK_SH | fcntl.LOCK_NB)
+
+        view = queue.snapshot(queue.QueueLocation(str(repository)))
+        assert not view['active']
+        assert [(row['phase'], row['active']) for row in view['jobs']] == [('pending', False)]
+        assert queue.status(paths).splitlines()[0] == 'watcher: stopped'
+
+
+def test_out_of_range_watcher_timestamp_is_unavailable(tmp_path):
+    repository = _repo(tmp_path / 'repo')
+    paths = queue.Paths(str(repository))
+    paths.add({'name': 'review', 'task': 'review code', 'files': ['source.py']})
+
+    with paths.lock('run'):
+        watcher = repository / paths.queue / 'watcher.pid'
+        watcher.write_text(json.dumps({'pid': 42, 'mode': 'run', 'job': 'review', 'started': 10**1000}))
+
+        view, warnings = queue.list_jobs(queue.QueueLocation(str(repository)))
+        assert [(row['phase'], row['started_at']) for row in view] == [('running', None)]
+        assert warnings == ['active queue job start time is unreadable']
+        report = queue.status(paths)
+        assert report.startswith('watcher: running (pid 42, run)')
+        assert '\nrunning: ' not in report
+
+
+def test_bare_jobs_and_ps_select_expected_views(tmp_path, monkeypatch, capsys):
+    repository = _repo(tmp_path / 'repo')
+    rows = [
+        _implementation('1' * 32, repository),
+        _implementation('2' * 32, repository, phase='interrupted', active=False),
+    ]
+    monkeypatch.setattr(jobstore, 'iter_status', lambda: iter(rows))
+
+    assert _run_command('jobs') == 0
+    report = capsys.readouterr().out
+    assert '1' * 32 in report and '2' * 32 in report
+
+    assert _run_command('ps', '--json') == 0
+    assert [row['job_id'] for row in json.loads(capsys.readouterr().out)['jobs']] == ['1' * 32]
+
+    assert _run_command('ps', '--all', '-C', str(repository), '--json') == 0
+    assert [row['job_id'] for row in json.loads(capsys.readouterr().out)['jobs']] == ['1' * 32, '2' * 32]

@@ -6,7 +6,7 @@ using the Python standard library enforces the bridge rules.
 
 Not affiliated with or endorsed by Google or Anthropic.
 
-**Version 0.2.0.** The test suite uses a fake `agy`. The bridge has been run once against the real `agy` 1.4.3
+**Version 0.3.0.** The test suite uses a fake `agy`. The bridge has been run once against the real `agy` 1.4.3
 (2026-10-20, fake files only): doctor, dry-run and delegate work, and writes, commands, reads outside the folder and
 network use were not possible headless without a permission. That is one version on one machine, not a guarantee; see
 [`docs/COMPAT.md`](docs/COMPAT.md) for what was measured and what stays unverified. A basic delegation also worked on
@@ -62,15 +62,15 @@ Then, inside a Git repository of your own:
 `doctor` checks the setup. `dry-run` shows exactly which files would be sent and sends nothing. `delegate` runs the task
 and shows the answer, labelled as untrusted. Add `.agy-bridge/` to the ignore file of every repository you use it in.
 
-The same without Claude Code:
+For the standalone CLI, install from a checkout in your virtual environment with
+`python3 -m pip install /path/to/claude-agy-bridge`. From the project you want to review, run:
 
 ```sh
-bin/agy-bridge dry-run  --repo "$PWD" --file src/a.py -- "Explain what a.py does"
-bin/agy-bridge delegate --repo "$PWD" --file src/a.py --timeout 5m -- "Explain what a.py does"
+agy-bridge dry-run -f src/a.py -- "Explain what a.py does"
+agy-bridge delegate -f src/a.py --timeout 5m -- "Explain what a.py does"
 ```
 
-To install the standalone command from a checkout, run `python3 -m pip install /path/to/claude-agy-bridge` in an
-active virtual environment. Use `agy-bridge` or `python3 -m agy_bridge` in place of `bin/agy-bridge`.
+You can also use `python3 -m agy_bridge`, or run the checkout's `bin/agy-bridge` with its absolute path.
 
 | Slash command | What it does |
 |---|---|
@@ -123,15 +123,14 @@ To have a diff reviewed, pass the changed source files with `--file`.
 Use `/agy:implement` in Claude Code, or preview a job from the terminal inside your Git project:
 
 ```sh
-bin/agy-bridge implement --dry-run --repo "$PWD" \
-  --file src/parser.py --file tests/test_parser.py --write-dir src \
+agy-bridge jobs start --dry-run -f src/parser.py -f tests/test_parser.py --write-dir src \
   --check '["python3", "-m", "unittest", "discover", "-s", "tests"]' \
   -- 'Fix the parser bug and run the regression tests.'
 ```
 
 Review the manifest, then submit without `--dry-run` and supply `--profile` as shown in the setup guide. Use the job ID
-with `implement-status`, `implement-patch`, `implement-cancel`, or `implement-resume`. The worker can continue after you
-close Claude Code while the Linux host stays running. After reviewing the patch, `implement-apply` requires its exact
+with `jobs show`, `jobs patch`, `jobs cancel`, or `jobs resume`. The worker can continue after you
+close Claude Code while the Linux host stays running. After reviewing the patch, `jobs apply` requires its exact
 SHA-256. [Set up credentials and run the full workflow](docs/IMPLEMENT.md).
 
 ## Find a background job
@@ -139,12 +138,13 @@ SHA-256. [Set up credentials and run the full workflow](docs/IMPLEMENT.md).
 Use `/agy:jobs` in Claude Code or run one of these commands locally.
 
 ```sh
-bin/agy-bridge jobs list --active
-bin/agy-bridge jobs list --repo "$PWD" --json
+agy-bridge ps
+agy-bridge ps -C "$PWD" --json
+agy-bridge jobs
 ```
 
-Without `--repo`, the list covers implementation jobs for the current user. With `--repo`, it shows that project's
-implementation jobs and one delegation queue. Use `--queue-dir` with `--repo` to select a custom queue.
+`ps` shows live jobs. `jobs` and `ps --all` include history. Use `-C` or `--repo` to filter implementation jobs and
+include one delegation queue for that project. Pass `--queue-dir` to select a custom queue.
 [Job inventory and JSON format](docs/CLI.md#job-inventory).
 
 ## Job queue

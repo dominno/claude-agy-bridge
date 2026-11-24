@@ -95,7 +95,8 @@ Both run and watch hold an exclusive advisory lock on `watcher.pid` (nonblocking
 200 ms). A second runner for that queue refuses with exit 4. The persistent file contains PID, mode and active job/start time; the lock, rather
 than PID existence, determines liveness. A stale file from a crash does not block a new runner. Status does
 not create directories or lock files; it briefly probes an existing lock. Runner retries tolerate that probe.
-Different configured queues can run independently.
+Use a distinct `--results-dir` for each parallel queue in a repository. The default results directory is shared
+and result filenames use the job name.
 
 SIGINT, SIGTERM and SIGHUP unwind delegate's existing cleanup, kill the agy process group and leave the
 unfinished job pending (exit 130). If a complete result was saved before interruption of the archive move,
