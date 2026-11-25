@@ -367,4 +367,3 @@ def cancel(root, name, reason=None, queue_dir=None, results_dir=None, allow=Fals
         # Archive first: if the move is unsafe the error propagates, the job stays pending and nothing is published.
         paths.move(rel, False, src)
         return paths.failure(rel, 'cancelled by reader: ' + reason, next_step, prefix='', archived=True)
-

@@ -158,4 +158,3 @@ def _edit_error(stream, returncode, timed_out, truncated, cancelled, malformed, 
     if malformed or stream.status is None:
         return "protocol"
     return None if stream.status == "SUCCESS" else "agy_failed"
-

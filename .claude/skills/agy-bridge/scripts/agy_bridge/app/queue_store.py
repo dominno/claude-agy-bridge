@@ -408,4 +408,3 @@ def _saved_result(paths, name, digest):
     if int(code) == 0 and not has_answer:
         raise invalid
     return int(code)
-
