@@ -11,7 +11,7 @@ from ..core import citations, config, events, stage
 from ..core.config import UsageError
 from ..core.scan import scan_bytes
 from ..port import model_runner
-from . import report
+from . import remote_delegation, report
 
 
 @dataclass(frozen=True)
@@ -32,6 +32,8 @@ class DelegationRequest:
     out: Optional[str] = None
     dry: bool = False
     save_large_answer: bool = False
+    remote: bool = False
+    remote_project: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -72,11 +74,12 @@ def _quote(arg: str) -> str:
     return arg if arg.isalnum() or arg.startswith("/") and " " not in arg else "'%s'" % arg.replace("'", "'\\''")
 
 
-def _manifest_text(st: stage.Staging, prepared: stage.Prepared) -> str:
-    lines = ["Would send %d file(s), %d bytes, to agy (Google). No file contents or task text have been sent."
-             % (prepared.file_count, prepared.total_bytes)]
-    for rel, size, sha in st.manifest:
-        lines.append("  %8d  %s  %s" % (size, sha[:12], stage.printable(rel)))
+def _manifest_text(prepared: stage.Prepared, remote: bool = False) -> str:
+    lines = ["Would send %d file(s), %d bytes, to %s. No file contents or task text have been sent."
+             % (prepared.file_count, prepared.total_bytes,
+                "an agy remote agent (Google cloud), inlined in the prompt" if remote else "agy (Google)")]
+    for entry in prepared.entries:
+        lines.append("  %8d  %s  %s" % (len(entry.data), entry.sha256[:12], stage.printable(entry.rel)))
     if prepared.skipped_by_denylist:
         lines.append("  (%d glob match(es) skipped by the denylist)" % prepared.skipped_by_denylist)
     return "\n".join(lines)
@@ -171,6 +174,9 @@ def _prepare(run: _Run):
     if request.require_verified and not request.cite:
         raise UsageError("--require-verified requires --cite")
     run.model = config.validate_model(request.model)
+    remote_delegation.validate_project(request.remote_project)
+    if request.remote_project and not request.remote:
+        raise UsageError("--remote-project requires --remote-agent")
     timeout = config.parse_duration(request.timeout)
     if min(request.max_bytes, request.max_file_bytes, request.max_out_bytes) < 1:
         raise UsageError("size limits must be positive")
@@ -180,6 +186,8 @@ def _prepare(run: _Run):
                                            request.max_file_bytes, request.max_bytes, extra,
                                            allow_non_git=request.allow_non_git_root,
                                            allow_fragment_file=request.allow_fragment_file, audit=run.prepared)
+    if request.remote:
+        remote_delegation.check_pasteable(run.prepared)
     run.out_path = report.resolve_out_path(request.out, run.root) if request.out else None
     env = config.build_agy_env(run.root)
     if not run.dry:
@@ -187,11 +195,38 @@ def _prepare(run: _Run):
     return timeout, env
 
 
+def _remote_preview(run: _Run) -> str:
+    try:
+        exe = model_runner.use().find_agy(run.root)
+    except model_runner.AgyMissing as exc:
+        return "agy command: unavailable (%s)\nNo program was run." % exc
+    return remote_delegation.argv_preview(exe, run.request.remote_project, run.model,
+                                          remote_delegation.preview_prompt_chars(run.prepared), _quote) + \
+        "\nNo program was run. The bridge runs no git."
+
+
+def _send_remote(run: _Run, timeout, env) -> None:
+    """Preview (dry run) or run one remote-agent turn; no staging folder is written: the files travel inline."""
+    if run.dry:
+        run.preview.extend((_manifest_text(run.prepared, remote=True), _remote_preview(run)))
+        run.code = config.EXIT_OK
+        return
+    exe = model_runner.use().find_agy(run.root)
+    run.result = remote_delegation.send(exe, run.prepared, run.request, run.model, env, timeout, run.mark_sent)
+    if run.sent:
+        run.diagnostics.append("agy-bridge: " + remote_delegation.NOTICE + "\n")
+    if run.result.tool_lines:
+        run.diagnostics.append("agy-bridge: " + remote_delegation.TOOLS_WARNING % run.result.tool_lines + "\n")
+
+
 def _stage_and_send(run: _Run, timeout, env) -> None:
     """Materialise the staging folder, then preview the send (dry run) or run agy in it."""
+    if run.request.remote:
+        _send_remote(run, timeout, env)
+        return
     with stage.materialize(run.prepared) as st:
         if run.dry:
-            run.preview.extend((_manifest_text(st, run.prepared), _argv_preview(run.model, run.root, env)))
+            run.preview.extend((_manifest_text(run.prepared), _argv_preview(run.model, run.root, env)))
             run.code = config.EXIT_OK
         else:
             agy = model_runner.use()
@@ -218,11 +253,25 @@ def _save_answer(run: _Run) -> None:
         run.written_path = report.write_temp_answer(saved)
 
 
+def _outcome(run: _Run):
+    """The raw answer bytes, the exit code before cleaning, and the failure text for a local or remote run."""
+    result = run.result
+    if run.request.remote:
+        code = result.exit_code
+        text = remote_delegation.FAILURE_TEXT.get(result.failure) or report.FAILURE_TEXT.get(code, "")
+        return (result.answer or "").encode("utf-8"), code, text
+    return result.out, None, None
+
+
 def _read_answer(run: _Run) -> None:
     """Clean and classify agy's output, check citations, then save the answer when it succeeded."""
     request = run.request
-    run.answer, removed = report.clean_counted(run.result.out, preserve_lines=request.cite)
-    run.code = report.classify(run.result, run.answer.strip())
+    raw, remote_code, remote_text = _outcome(run)
+    run.answer, removed = report.clean_counted(raw, preserve_lines=request.cite)
+    if remote_code is None:
+        run.code = report.classify(run.result, run.answer.strip())
+    else:
+        run.code = remote_code if remote_code != config.EXIT_OK or run.answer.strip() else config.EXIT_EMPTY
     if request.cite:
         run.checked = citations.check(run.answer, run.prepared.entries)
         if removed:
@@ -231,7 +280,7 @@ def _read_answer(run: _Run) -> None:
     else:
         run.answer = report.with_note(run.answer, removed)
     if run.code != config.EXIT_OK:
-        run.fail(report.FAILURE_TEXT[run.code])
+        run.fail(remote_text if remote_code is not None and remote_code == run.code else report.FAILURE_TEXT[run.code])
     else:
         _save_answer(run)
 
@@ -263,6 +312,12 @@ def _refuse(run: _Run, exc: BaseException) -> None:
         run.code = config.EXIT_REFUSED
 
 
+def _truncated(run: _Run) -> bool:
+    if run.result is None:
+        return False
+    return run.result.failure == "output_limit" if run.request.remote else run.result.truncated
+
+
 def _event_record(run: _Run) -> dict:
     prepared, sent = run.prepared, run.sent
     record = {
@@ -273,8 +328,12 @@ def _event_record(run: _Run) -> dict:
                      for item in prepared.not_sent],
         "total_bytes": prepared.total_bytes if sent else 0,
         "seconds": round(time.monotonic() - run.started, 3), "exit_code": run.code,
-        "truncated": run.result.truncated if run.result else False, "dry_run": run.dry,
+        "truncated": _truncated(run), "dry_run": run.dry,
     }
+    if run.request.remote:
+        record["remote"] = {"project": run.request.remote_project,
+                            "failure": run.result.failure if run.result else None,
+                            "tool_lines": run.result.tool_lines if run.result else 0}
     if run.checked is not None:
         record["cite"] = {"verified": run.checked.verified, "unverified": run.checked.unverified}
     return record

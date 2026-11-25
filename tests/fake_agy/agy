@@ -39,9 +39,118 @@ if args[:1] == ["--version"]:
     side_record("version")
     print("agy " + CONFIG.get("version", "1.0.0"))
     sys.exit(0)
+if args[:1] == ["--help"]:
+    side_record("help")
+    print("Usage of agy:\n  --print  Run a single prompt\n" +
+          ("" if CONFIG.get("no_remote") else "  --remote-agent  Run this session's conversations using remote agents\n"))
+    sys.exit(0)
 if args[:1] == ["models"]:
     side_record("models")
     print("fake-model-1\nfake-model-2")
+    sys.exit(0)
+
+
+# --- remote agent: a small terminal UI on the pty, like agy's interactive mode -------------------------------------
+# remote_mode: ok | tool | auth | cloud_disabled | model_unavailable | env_limit | no_end | hang | exit_early
+# answer: the reply body (lines); remote_extra_lines: filler lines streamed before the reply, to force scrolling.
+
+def tui_write(text):
+    os.write(1, text.encode("utf-8"))
+
+
+def tui_read(timeout):
+    import select
+    ready, _, _ = select.select([0], [], [], timeout)
+    return os.read(0, 65536) if ready else b""
+
+
+FOOTER = 3
+
+
+def tui_footer(status):
+    project = args[args.index("--project") + 1] if "--project" in args else "CLI Project (fakehost)"
+    tui_write("\x1b[2K" + "\u2500" * 40 + "\r\n\x1b[2K> \r\n\x1b[2K" + status + "    remote \u00b7 " + project)
+
+
+def tui_lines(lines, status):
+    """Erase the footer, print transcript lines into the scrollback, redraw the footer (ink-style)."""
+    tui_write("\r\x1b[2K" + "\x1b[1A\x1b[2K" * (FOOTER - 1))
+    for line in lines:
+        # Draw each line in two parts with cursor movement, so plain escape stripping would scramble it.
+        half = len(line) // 2
+        tui_write(line[half:] and ("\x1b[%dC" % half if half else "") + line[half:] + "\r" + line[:half] + "\r\n"
+                  or line + "\r\n")
+    tui_footer(status)
+
+
+def tui_wait_for(predicate, timeout=30):
+    data = b""
+    end = time.time() + timeout
+    while time.time() < end:
+        data += tui_read(0.2)
+        if predicate(data):
+            return data
+    sys.exit(3)
+
+
+def remote_tui():
+    import re
+    import tty
+    side_record("remote")
+    mode = CONFIG.get("remote_mode", "ok")
+    if mode == "exit_early":
+        sys.stderr.write("Error: remote agents need a Google sign-in\n")
+        sys.exit(2)
+    try:
+        open("/dev/tty").close()
+        ctty = True
+    except OSError:
+        ctty = False
+    tty.setraw(0)
+    tui_write("\x1b[c\x1b[6n")
+    tui_read(0.5)
+    tui_write("\x1b[?1049h\x1b[H\x1b[2JDo you trust the contents of this project?\r\n> 1. Yes, I trust this folder")
+    tui_wait_for(lambda d: b"\r" in d)
+    tui_write("\x1b[?1049l\x1b[?2004h  Fake Antigravity CLI\r\n  remote workspace\r\n")
+    if mode == "auth":
+        tui_write("Welcome. You are currently not signed in.\r\nSelect login method:\r\n")
+        time.sleep(300)
+    if mode == "default_project" and "--project" in args:
+        tui_write("\u26a0 Project Not Found\r\n  Remote project %s not found, using this machine's default remote "
+                  "project\r\n" % args[args.index("--project") + 1])
+    tui_footer("? for shortcuts")
+    pasted = tui_wait_for(lambda d: b"\r" in d.partition(b"\x1b[201~")[2])
+    prompt = pasted.split(b"\x1b[200~", 1)[1].split(b"\x1b[201~", 1)[0].decode("utf-8")
+    if CONFIG.get("record_path"):
+        with open(CONFIG["record_path"] + ".prompt", "w") as fh:
+            json.dump({"prompt": prompt, "ctty": ctty, "argv": sys.argv}, fh)
+    echo = prompt.split("\n")
+    tui_lines(["> " + echo[0]] + ["  " + line for line in echo[1:]] + [""], "\u28fb Working...  esc to cancel")
+    failures = {"cloud_disabled": "Error: cloud conversations are not enabled for this account",
+                "model_unavailable": "Error: model fake-model-1 isn't available for remote conversations",
+                "env_limit": "Failed to send message: resource_exhausted: Reached the limit of 5 running environments"}
+    if mode in failures:
+        tui_lines(["\u26a0 " + failures[mode], ""], "? for shortcuts")
+        time.sleep(300)
+    if mode == "hang":
+        time.sleep(300)
+    begin = "".join(re.search(r"joining (\S+) and (\S+) with nothing between", prompt).groups())
+    end = "".join(re.search(r"joining (\S+) and (\S+)\. Put nothing", prompt).groups())
+    if mode == "tool":
+        tui_lines(["\u25cf Ran (uname -a) (ctrl+o to expand)", ""], "\u28fb Working...  esc to cancel")
+    filler = ["  filler line %d" % i for i in range(int(CONFIG.get("remote_extra_lines", 0)))]
+    body = ["  " + line for line in CONFIG.get("answer", "fake answer").split("\n")]
+    tail = [] if mode == "no_end" else ["  " + end]
+    tui_lines(["\u25b8 Thought for 1s", ""] + filler + ["  " + begin] + body, "\u28fb Working...  esc to cancel")
+    time.sleep(0.3)
+    tui_lines(tail + ["", "  Sources:", "    \u25b8 example.invalid"], "? for shortcuts")
+    while True:
+        if not tui_read(1.0) and os.getppid() == 1:
+            sys.exit(0)
+
+
+if "--remote-agent" in args:
+    remote_tui()
     sys.exit(0)
 
 

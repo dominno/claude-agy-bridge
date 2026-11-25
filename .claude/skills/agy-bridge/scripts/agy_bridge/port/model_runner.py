@@ -69,6 +69,42 @@ class EditRunResult:
         }.get(self.error_kind, config.EXIT_AGY_FAILED)
 
 
+@dataclass(frozen=True)
+class RemoteRunResult:
+    """One remote-agent turn read off the terminal screen.
+
+    `answer` is the text between the reply markers (None when they were not both seen); `failure` names why the
+    turn did not finish cleanly: auth, cloud_disabled, remote_unavailable, model_unavailable, quota, environment_limit,
+    send_failed, timeout, not_ready, not_submitted, exited, no_end_marker, no_answer,
+    output_limit or project_mismatch."""
+    answer: Optional[str]
+    failure: Optional[str]
+    returncode: Optional[int]
+    seconds: float
+    tool_lines: int = 0  # lines where the program showed a tool call before the reply (e.g. "● Ran ...")
+
+    @property
+    def exit_code(self) -> int:
+        if self.failure is None:
+            return config.EXIT_OK if (self.answer or "").strip() else config.EXIT_EMPTY
+        return REMOTE_EXIT_CODES.get(self.failure, config.EXIT_AGY_FAILED)
+
+
+REMOTE_EXIT_CODES = {
+    "auth": config.EXIT_AUTH,
+    "quota": config.EXIT_QUOTA,
+    "environment_limit": config.EXIT_QUOTA,
+    "timeout": config.EXIT_TIMEOUT,
+    "cloud_disabled": config.EXIT_UNSUPPORTED,
+    "remote_unavailable": config.EXIT_UNSUPPORTED,
+    "model_unavailable": config.EXIT_UNSUPPORTED,
+    "no_end_marker": config.EXIT_INCOMPLETE,
+    "output_limit": config.EXIT_INCOMPLETE,
+    "no_answer": config.EXIT_EMPTY,
+    "project_mismatch": config.EXIT_REFUSED,
+}
+
+
 class ModelRunner(Protocol):
     def find_agy(self, keep_out_of: Optional[str] = None) -> str: ...
 
@@ -84,6 +120,11 @@ class ModelRunner(Protocol):
 
     def run_agy(self, argv: List[str], cwd: str, env: Dict[str, str], timeout_s: float, max_out: int,
                 on_started=None) -> RunResult: ...
+
+    def build_remote_argv(self, exe: str, project: Optional[str], model: Optional[str]) -> List[str]: ...
+
+    def run_remote(self, argv: List[str], prompt: str, markers, env: Dict[str, str], timeout_s: float,
+                   max_out: int, on_started=None) -> RemoteRunResult: ...
 
     def run_edit_agy(self, exe: str, cwd: str, env: Dict[str, str], model: Optional[str], timeout_s: float,
                      conversation_id: Optional[str], prompt: str,

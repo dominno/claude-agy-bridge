@@ -18,7 +18,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 from ..core import config
 from ..port import process
 from ..port.model_runner import (AgyMissing, AgyNotRun, EditCleanupError, EditRunResult,  # noqa: F401
-                                 RunResult, UnsupportedAgy)
+                                 RemoteRunResult, RunResult, UnsupportedAgy)
+from . import agy_remote
 from .agy_stream import (_EditProtocolError, _EditStream, _edit_error, _markers, _structured_agy_error,  # noqa: F401
                          MarkerScan, valid_conversation_id)
 from .edit_runtime import GUEST_PRIVATE_PATHS, MIN_AGY_VERSION, execution_deadline
@@ -276,6 +277,64 @@ def run_agy(argv: List[str], cwd: str, env: Dict[str, str], timeout_s: float, ma
     code = proc.returncode if proc is not None else None
     return RunResult(code, bytes(capture.out), capture.err_bytes, capture.markers.found, capture.timed_out,
                      capture.truncated, time.monotonic() - started)
+
+
+def build_remote_argv(exe: str, project: Optional[str], model: Optional[str]) -> List[str]:
+    """The interactive remote-agent command. agy offers remote agents only in its terminal UI (no --print yet)."""
+    argv = [exe, "--remote-agent"]
+    if project:
+        argv += ["--project", project]
+    if model:
+        argv += ["--model", model]
+    for token in argv[1:]:
+        if any(frag in token.lower() for frag in FORBIDDEN_FRAGMENTS):
+            raise UnsupportedAgy("refusing to build a command line with a permission-widening flag")
+    return argv
+
+
+def _refresh_sign_in(exe, env, cwd):
+    """'agy models' (no prompt, no files) first: it renews an expired sign-in token, which the terminal UI was
+    seen not to do (it showed its login screen instead). A failure here is left to the UI to report."""
+    try:
+        run_probe([exe, "models"], env, cwd, timeout=30)
+    except (OSError, process.TimeoutExpired, UnsupportedAgy):
+        pass
+
+
+def run_remote(argv: List[str], prompt: str, markers, env: Dict[str, str], timeout_s: float, max_out: int,
+               on_started=None) -> RemoteRunResult:
+    """One remote-agent turn on a pseudo-terminal, in a fresh empty 0700 folder (never the repository)."""
+    started = time.monotonic()
+    env = dict(env, TERM="xterm-256color")
+    with tempfile.TemporaryDirectory(prefix="agy-bridge-remote-") as empty:
+        _refresh_sign_in(argv[0], env, empty)
+        proc, master = process.spawn_pty(argv, cwd=empty, env=env, rows=agy_remote.ROWS, cols=agy_remote.COLS)
+        turn = agy_remote.Turn(prompt, markers, max_out, on_paste=on_started)
+        try:
+            outcome = agy_remote.drive(master, proc, turn, started + timeout_s)
+        finally:
+            _stop_terminal(proc, master)
+    failure = None if outcome == "done" else outcome
+    return RemoteRunResult(turn.answer if failure is None else None, failure, proc.returncode,
+                           time.monotonic() - started, turn.tools_used())
+
+
+def _stop_terminal(proc, master):
+    """SIGTERM, then SIGKILL the whole group. The master is closed first: a program that is exiting can wait
+    for its terminal output to drain, so it is never reaped while the master is still open and unread."""
+    process.kill_group(proc.pid, signal.SIGTERM)
+    try:
+        os.close(master)
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=2)
+    except process.TimeoutExpired:
+        process.kill_group(proc.pid, signal.SIGKILL)
+        try:
+            proc.wait(timeout=5)
+        except process.TimeoutExpired:
+            pass
 
 
 class _StoppedBeforeLaunch(Exception):

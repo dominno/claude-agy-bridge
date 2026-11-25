@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+
+- `delegate --remote-agent [--remote-project NAME]` (and the same on `dry-run`) runs a read-only delegation on an
+  agy remote agent in Google's cloud. agy 1.5.17 supports remote agents only in its interactive terminal UI, so the
+  bridge runs `agy --remote-agent` on a pseudo-terminal in a new empty folder, accepts the folder-trust question for
+  that folder, pastes the prompt with bracketed paste (never on the command line) and reads the reply off the screen
+  with a VT emulator that keeps the scrollback. The files go through the usual checks and are inlined between
+  tagged delimiters; files or tasks with terminal control or invisible characters are refused. The reply is framed
+  by random markers (named in the prompt only as halves) and requested as a fenced code block so Markdown rendering
+  cannot change quotes; `--cite`/`--require-verified` check it against the local bytes. Sign-in screens, disabled
+  cloud conversations, unavailable remote agents or models, an unknown project (agy would fall back to the default
+  one), the running-environment limit, timeouts and a missing end marker fail fast with their own messages and
+  the usual exit codes. A tool call shown before the reply is counted in the event record and printed as a warning.
+  Needs agy 1.5.17+; `doctor` reports whether agy offers remote agents, without network or sign-in.
+- `port/process.py` gains `spawn_pty`, which starts a program on a new pseudo-terminal as its controlling terminal.
+
 ### Fixed
 
 - The launcher and detached workers no longer write `__pycache__` into the installed skill directory.
