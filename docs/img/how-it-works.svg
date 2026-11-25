@@ -1,18 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1436" viewBox="0 0 1200 1436" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1836" viewBox="0 0 1200 1836" role="img" aria-labelledby="title description">
   <title id="title">agy-bridge workflow for Claude Code</title>
-  <desc id="description">Inspect the selected files before sending them to Google. Delegate returns a read-only review. Implement edits an isolated copy, can rerun offline tests and resume the same job, and exports a patch for explicit application. Jobs list shows active work.</desc>
+  <desc id="description">Inspect the selected files, confirm the manifest and pass the permission prompt before anything is sent to Google. Delegate returns an untrusted read-only answer that you check and record a verdict on; the queue runs read-only jobs in order and can be watched or cancelled. Implement edits an isolated copy on Linux with Bubblewrap 0.8.0 or later, can rerun offline tests and resume, and exports a patch for explicit application. Secrets, links, binaries and invisible Unicode are never sent. Graders run model-written code only inside an OS sandbox. Jobs list and ps show active work.</desc>
   <defs>
     <marker id="down" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0 0 10 5 0 10Z" fill="#64748b"/>
     </marker>
   </defs>
-  <rect width="1200" height="1436" fill="#f1f5f9"/>
+  <rect width="1200" height="1836" fill="#f1f5f9"/>
   <g font-family="DejaVu Sans, Arial, sans-serif" fill="#0f172a">
     <rect x="46" y="40" width="1108" height="150" rx="20" fill="#12243a"/>
     <text x="82" y="106" font-size="44" font-weight="700" fill="#fff">agy-bridge + Claude Code</text>
-    <text x="84" y="148" font-size="23" fill="#cbd5e1">Read-only reviews, resumable implementation, and job status</text>
+    <text x="84" y="148" font-size="23" fill="#cbd5e1">Read-only reviews, isolated coding jobs, and checked results</text>
 
-    <rect x="46" y="214" width="1108" height="178" rx="18" fill="#fff" stroke="#d0dae6" stroke-width="2"/>
+    <rect x="46" y="214" width="1108" height="190" rx="18" fill="#fff" stroke="#d0dae6" stroke-width="2"/>
     <text x="78" y="256" font-size="25" font-weight="700">Inspect the inputs before sending</text>
     <g font-family="DejaVu Sans Mono, monospace" font-size="19" fill="#1e3a5f">
       <rect x="78" y="277" width="312" height="43" rx="7" fill="#eaf0f7"/>
@@ -22,76 +22,107 @@
       <rect x="674" y="277" width="448" height="43" rx="7" fill="#eaf0f7"/>
       <text x="690" y="305">jobs start --dry-run</text>
     </g>
-    <text x="78" y="353" font-size="19" fill="#334155">Check the file manifest and omissions. Google can process the selected files and task text.</text>
+    <text x="78" y="353" font-size="19" fill="#334155">Google receives only the selected files and the task text.</text>
+    <text x="78" y="381" font-size="17" fill="#475569">Queue jobs can add .agy-bridge.json context files and, with "need": true, up to 3 more files.</text>
 
-    <rect x="46" y="420" width="541" height="658" rx="18" fill="#fff" stroke="#bfd3f5" stroke-width="2"/>
-    <rect x="613" y="420" width="541" height="658" rx="18" fill="#fff" stroke="#acd9d0" stroke-width="2"/>
+    <rect x="46" y="428" width="1108" height="90" rx="18" fill="#fff7e6" stroke="#f0c36d" stroke-width="2"/>
+    <text x="78" y="464" font-size="22" font-weight="700" fill="#7c4a03">You confirm the manifest  →  Claude Code permission prompt  →  send</text>
+    <text x="78" y="497" font-size="17" fill="#7c4a03">Claude cannot start /agy:delegate, /agy:queue or /agy:implement on its own.</text>
+
+    <rect x="46" y="542" width="541" height="742" rx="18" fill="#fff" stroke="#bfd3f5" stroke-width="2"/>
+    <rect x="613" y="542" width="541" height="742" rx="18" fill="#fff" stroke="#acd9d0" stroke-width="2"/>
     <g font-family="DejaVu Sans Mono, monospace" font-size="26" font-weight="700">
-      <text x="76" y="467" fill="#1e40af">/agy:delegate</text>
-      <text x="643" y="467" fill="#11675d">/agy:implement</text>
+      <text x="76" y="589" fill="#1e40af">/agy:delegate</text>
+      <text x="643" y="589" fill="#11675d">/agy:implement</text>
     </g>
     <g font-size="19" fill="#475569">
-      <text x="76" y="500">Get a review or explanation</text>
-      <text x="643" y="500">Give AGY a coding task</text>
+      <text x="76" y="622">Get a review or explanation</text>
+      <text x="643" y="622">Give AGY a coding task</text>
     </g>
 
     <g>
-      <rect x="76" y="524" width="481" height="86" rx="10" fill="#eff5ff"/>
-      <rect x="76" y="640" width="481" height="86" rx="10" fill="#eff5ff"/>
-      <rect x="76" y="756" width="481" height="86" rx="10" fill="#eff5ff"/>
-      <rect x="643" y="524" width="467" height="86" rx="10" fill="#eaf8f4"/>
-      <rect x="643" y="640" width="467" height="86" rx="10" fill="#eaf8f4"/>
-      <rect x="643" y="756" width="467" height="86" rx="10" fill="#eaf8f4"/>
-      <rect x="643" y="872" width="467" height="86" rx="10" fill="#eaf8f4"/>
+      <rect x="76" y="646" width="481" height="86" rx="10" fill="#eff5ff"/>
+      <rect x="76" y="762" width="481" height="86" rx="10" fill="#eff5ff"/>
+      <rect x="76" y="878" width="481" height="86" rx="10" fill="#eff5ff"/>
+      <rect x="76" y="994" width="481" height="86" rx="10" fill="#eff5ff"/>
+      <rect x="643" y="646" width="467" height="86" rx="10" fill="#eaf8f4"/>
+      <rect x="643" y="762" width="467" height="86" rx="10" fill="#eaf8f4"/>
+      <rect x="643" y="878" width="467" height="86" rx="10" fill="#eaf8f4"/>
+      <rect x="643" y="994" width="467" height="86" rx="10" fill="#eaf8f4"/>
     </g>
     <g stroke="#64748b" stroke-width="2.5" marker-end="url(#down)">
-      <path d="M316 615v19"/><path d="M316 731v19"/>
-      <path d="M876 615v19"/><path d="M876 731v19"/><path d="M876 847v19"/>
+      <path d="M316 737v19"/><path d="M316 853v19"/><path d="M316 969v19"/>
+      <path d="M876 737v19"/><path d="M876 853v19"/><path d="M876 969v19"/>
     </g>
-    <path d="M1112 800h19V684h-17" fill="none" stroke="#2d8476" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#down)"/>
+    <path d="M1112 922h19V806h-17" fill="none" stroke="#2d8476" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#down)"/>
     <g font-size="22" font-weight="700">
-      <text x="97" y="558" fill="#1e3a8a">Stage the selected files</text>
-      <text x="97" y="674" fill="#1e3a8a">AGY reads the snapshot</text>
-      <text x="97" y="790" fill="#1e3a8a">Review the answer</text>
-      <text x="664" y="558" fill="#115e56">Create an isolated copy</text>
-      <text x="664" y="674" fill="#115e56">AGY edits the copy</text>
-      <text x="664" y="790" fill="#115e56">Run the configured check</text>
-      <text x="664" y="906" fill="#115e56">Review and apply the patch</text>
+      <text x="97" y="680" fill="#1e3a8a">Stage the selected files</text>
+      <text x="97" y="796" fill="#1e3a8a">AGY reads the snapshot</text>
+      <text x="97" y="912" fill="#1e3a8a">Review the answer</text>
+      <text x="97" y="1028" fill="#1e3a8a">Record a verdict</text>
+      <text x="664" y="680" fill="#115e56">Create an isolated copy</text>
+      <text x="664" y="796" fill="#115e56">AGY edits the copy</text>
+      <text x="664" y="912" fill="#115e56">Run the configured check</text>
+      <text x="664" y="1028" fill="#115e56">Review and apply the patch</text>
     </g>
     <g font-size="18" fill="#334155">
-      <text x="97" y="586">The bridge copies them to a temporary folder.</text>
-      <text x="97" y="702">The read-only job returns a text answer.</text>
-      <text x="97" y="818">Check quotes and inspect the event log.</text>
-      <text x="664" y="586">Submission returns a job ID.</text>
-      <text x="664" y="702">The worker saves the conversation for resume.</text>
-      <text x="664" y="818">Offline test failures can go back to AGY.</text>
-      <text x="664" y="934">The bridge verifies the hash and file contents.</text>
+      <text x="97" y="708">The bridge copies them to a temporary folder.</text>
+      <text x="97" y="824">The read-only job returns a text answer.</text>
+      <text x="97" y="940">Untrusted text: check quotes and the event log.</text>
+      <text x="97" y="1056">verdict pass, fixes or reject, with evidence.</text>
+      <text x="664" y="708">Submission returns a job ID.</text>
+      <text x="664" y="824">The worker saves the conversation for resume.</text>
+      <text x="664" y="940">Offline; failures can go back to AGY.</text>
+      <text x="664" y="1056">The bridge verifies the hash and file contents.</text>
     </g>
 
-    <path d="M76 880h481" stroke="#dbe5f1" stroke-width="2"/>
-    <text x="76" y="919" font-size="21" font-weight="700" fill="#1e3a8a">Batch read-only jobs</text>
-    <text x="76" y="949" font-size="18" fill="#334155">Use /agy:queue to run them in order.</text>
-    <text x="76" y="975" font-size="18" fill="#334155">/agy:status shows progress and saved results.</text>
-    <text x="76" y="1033" font-size="16" fill="#475569">macOS or Linux</text>
+    <path d="M76 1110h481" stroke="#dbe5f1" stroke-width="2"/>
+    <text x="76" y="1148" font-size="21" font-weight="700" fill="#1e3a8a">Batch read-only jobs</text>
+    <text x="76" y="1180" font-family="DejaVu Sans Mono, monospace" font-size="16" fill="#1e3a5f">/agy:queue add · run · watch --detach · cancel</text>
+    <text x="76" y="1208" font-size="18" fill="#334155">A running watcher sends a new job at once.</text>
+    <text x="76" y="1234" font-size="18" fill="#334155">/agy:status shows progress and saved results.</text>
+    <text x="76" y="1264" font-size="16" fill="#475569">macOS or Linux</text>
 
-    <rect x="643" y="976" width="467" height="38" rx="7" fill="#183e37"/>
-    <text x="657" y="1001" font-family="DejaVu Sans Mono, monospace" font-size="16" fill="#f2fffb">jobs apply &lt;job&gt; --sha256 &lt;hash&gt;</text>
-    <text x="643" y="1041" font-size="16" fill="#475569">Linux · Bubblewrap · AGY 1.5.16+ (major version 1)</text>
+    <rect x="643" y="1106" width="467" height="38" rx="7" fill="#183e37"/>
+    <text x="657" y="1131" font-family="DejaVu Sans Mono, monospace" font-size="16" fill="#f2fffb">jobs apply &lt;job&gt; --sha256 &lt;hash&gt;</text>
+    <text x="643" y="1176" font-size="16" fill="#475569">Linux · Bubblewrap 0.8.0+ · AGY 1.5.16+ (major version 1)</text>
+    <text x="643" y="1204" font-size="16" fill="#9a3412">The agent shares the host network:</text>
+    <text x="643" y="1228" font-size="16" fill="#9a3412">run it in a VM or container.</text>
 
-    <rect x="46" y="1104" width="1108" height="150" rx="18" fill="#fff" stroke="#d0dae6" stroke-width="2"/>
-    <text x="78" y="1146" font-size="25" font-weight="700">Find active jobs across projects</text>
-    <rect x="78" y="1165" width="310" height="41" rx="7" fill="#eaf0f7"/>
-    <text x="93" y="1192" font-family="DejaVu Sans Mono, monospace" font-size="19" fill="#1e3a5f">agy-bridge ps</text>
-    <text x="409" y="1192" font-size="18" fill="#334155">Lists the current user's live implementation jobs.</text>
-    <text x="78" y="1230" font-size="18" fill="#334155">Add -C PATH to include that repository's delegation queue. Use --json for tools.</text>
+    <rect x="46" y="1310" width="541" height="170" rx="18" fill="#fff" stroke="#e7b9b9" stroke-width="2"/>
+    <text x="76" y="1350" font-size="22" font-weight="700" fill="#7f1d1d">Never sent (refused or skipped)</text>
+    <g font-size="17" fill="#334155">
+      <text x="76" y="1382">.env*, keys, tokens, credential folders (.ssh, .aws)</text>
+      <text x="76" y="1408">key-shaped content in a file or the task</text>
+      <text x="76" y="1434">symlinks, hard links, binaries, oversized files</text>
+      <text x="76" y="1460">invisible Unicode and terminal controls in patches</text>
+    </g>
 
-    <rect x="46" y="1280" width="1108" height="110" rx="18" fill="#12243a"/>
-    <text x="78" y="1320" font-size="22" font-weight="700" fill="#fff">Manage an implementation job by ID</text>
+    <rect x="613" y="1310" width="541" height="170" rx="18" fill="#fff" stroke="#d0dae6" stroke-width="2"/>
+    <text x="643" y="1350" font-size="22" font-weight="700">Check model-written code</text>
+    <rect x="643" y="1364" width="300" height="30" rx="6" fill="#eaf0f7"/>
+    <text x="655" y="1385" font-family="DejaVu Sans Mono, monospace" font-size="16" fill="#1e3a5f">grade-mutants · apply-diff</text>
+    <g font-size="17" fill="#334155">
+      <text x="643" y="1420">A trusted test case runs on a scratch copy inside</text>
+      <text x="643" y="1444">an OS sandbox (sandbox-exec, or bwrap 0.8.0+).</text>
+      <text x="643" y="1468">No sandbox: refused unless --unsafe-no-sandbox.</text>
+    </g>
+
+    <rect x="46" y="1504" width="1108" height="150" rx="18" fill="#fff" stroke="#d0dae6" stroke-width="2"/>
+    <text x="78" y="1546" font-size="25" font-weight="700">Find active jobs across projects</text>
+    <rect x="78" y="1565" width="310" height="41" rx="7" fill="#eaf0f7"/>
+    <text x="93" y="1592" font-family="DejaVu Sans Mono, monospace" font-size="19" fill="#1e3a5f">agy-bridge ps</text>
+    <text x="409" y="1592" font-size="18" fill="#334155">Lists the current user's live implementation jobs.</text>
+    <text x="78" y="1630" font-size="18" fill="#334155">Add -C PATH to include that repository's delegation queue. Use --json for tools.</text>
+
+    <rect x="46" y="1680" width="1108" height="110" rx="18" fill="#12243a"/>
+    <text x="78" y="1720" font-size="22" font-weight="700" fill="#fff">Manage an implementation job by ID</text>
     <g font-family="DejaVu Sans Mono, monospace" font-size="18" fill="#d8f3eb">
-      <text x="78" y="1356">jobs show</text>
-      <text x="332" y="1356">jobs patch</text>
-      <text x="589" y="1356">jobs cancel</text>
-      <text x="850" y="1356">jobs resume</text>
+      <text x="78" y="1756">jobs show</text>
+      <text x="298" y="1756">jobs patch</text>
+      <text x="518" y="1756">jobs cancel</text>
+      <text x="738" y="1756">jobs resume</text>
+      <text x="958" y="1756">jobs prune</text>
     </g>
   </g>
 </svg>

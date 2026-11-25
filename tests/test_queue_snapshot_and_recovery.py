@@ -95,14 +95,17 @@ def test_complete_legacy_only_is_valid_without_a_checksum(h, monkeypatch, leave_
         text = text.replace(queue.RESULT_FORMAT + "\n", "", 1)
     report.write_text(text, encoding="utf-8")
     (h.repo / paths.queue / "done/example.job").rename(h.repo / rel)
-    monkeypatch.setattr(queue, "attempt", lambda *args: pytest.fail("resent a saved job"))
 
     if leave_old_format:
+        monkeypatch.setattr(queue, "attempt", lambda *args: pytest.fail("resent a saved job"))
         assert queue.run_job(paths, rel) == 0
     else:
-        with pytest.raises(config.UsageError, match="conflicts with existing result"):
-            queue.run_job(paths, rel)
-        assert not (h.repo / paths.queue / "done/example.job").exists()
+        # A v2 result of this exact job without its checksum footer is an interrupted write: set aside, re-run.
+        sent = []
+        monkeypatch.setattr(queue, "attempt", lambda *args: sent.append(1) or _answer())
+        assert queue.run_job(paths, rel) == 0
+        assert sent == [1] and (h.repo / paths.results / "example.md.partial").read_text(encoding="utf-8") == text
+        assert (h.repo / paths.queue / "done/example.job").exists()
 
 
 @pytest.mark.parametrize("code, archive", [(0, "done"), (config.EXIT_TIMEOUT, "failed")])
@@ -142,3 +145,72 @@ def test_archive_alias_needs_a_matching_saved_result(h, monkeypatch):
         queue.run_job(paths, rel)
     assert archived.stat().st_ino == inbox.stat().st_ino
     assert archived.stat().st_nlink == 2
+
+
+# ---------- council round 1: atomic result publication ----------
+
+def _interrupted_queue(h):
+    import hashlib
+    import json as _json
+    from agy_bridge import queue as q
+    paths = q.Paths(str(h.repo))
+    job = dict(name='example', model='fake', task='review', files=['notes.md'], timeout='5s', context=False)
+    rel = paths.add(job)
+    raw = (h.repo / rel).read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    results = h.repo / '.agy-bridge/results'
+    results.mkdir(parents=True, exist_ok=True)
+    head = '# example\n\n%s\n\n%s\njob_sha256: %s\nmodel: fake\nround: 1\nexit_code: 0\n' % (
+        q.RESULT_WARNING, q.RESULT_FORMAT, digest)
+    return paths, rel, results, head
+
+
+def test_truncated_result_of_the_same_job_is_set_aside_and_rerun(h, capsys, monkeypatch):
+    from agy_bridge import queue as q
+    paths, rel, results, head = _interrupted_queue(h)
+    monkeypatch.setattr(q, "attempt", lambda *args, **kw: _answer())
+    (results / 'example.md').write_text(head + 'retained_exit_')  # writer died before the checksum footer
+    assert q.run(paths) == 0
+    assert 'interrupted result write; re-running' in capsys.readouterr().out
+    assert (results / 'example.md.partial').read_text() == head + 'retained_exit_'
+    text = (results / 'example.md').read_text()
+    assert q._saved_result(paths, 'example', text.split('job_sha256: ')[1].split('\n')[0]) == 0
+    assert (h.repo / '.agy-bridge/queue/done/example.job').exists()
+    assert not [p for p in results.iterdir() if p.name.startswith('.agy-tmp-')]
+
+
+def test_different_job_reusing_a_name_still_conflicts(h, monkeypatch):
+    from agy_bridge import queue as q
+    paths, rel, results, head = _interrupted_queue(h)
+    monkeypatch.setattr(q, "attempt", lambda *args: pytest.fail("resent a conflicting job"))
+    (results / 'example.md').write_text(head.replace('job_sha256: ', 'job_sha256: 0') + 'partial')
+    assert q.run(paths) == config.EXIT_USAGE
+    assert not (results / 'example.md.partial').exists()
+
+
+def test_publish_never_replaces_and_leaves_no_temp(tmp_path):
+    from agy_bridge import safety
+    (tmp_path / 'r').mkdir()
+    safety.publish(str(tmp_path), 'r/a.md', 'first\n')
+    with pytest.raises(FileExistsError):
+        safety.publish(str(tmp_path), 'r/a.md', 'second\n')
+    assert (tmp_path / 'r/a.md').read_text() == 'first\n'
+    assert sorted(p.name for p in (tmp_path / 'r').iterdir()) == ['a.md']
+    assert (tmp_path / 'r/a.md').stat().st_mode & 0o777 == 0o600
+
+
+def test_sweep_removes_old_and_already_published_temps_only(tmp_path):
+    import time as _time
+    from agy_bridge import safety
+    folder = tmp_path / 'r'
+    folder.mkdir()
+    old = folder / '.agy-tmp-old.md-1'
+    old.write_text('x')
+    os.utime(old, (_time.time() - 7200, _time.time() - 7200))
+    young = folder / '.agy-tmp-young.md-2'
+    young.write_text('x')
+    linked = folder / '.agy-tmp-done.md-3'
+    linked.write_text('x')
+    os.link(linked, folder / 'done.md')
+    assert safety.sweep_temp(str(tmp_path), 'r') == 2
+    assert sorted(p.name for p in folder.iterdir()) == ['.agy-tmp-young.md-2', 'done.md']

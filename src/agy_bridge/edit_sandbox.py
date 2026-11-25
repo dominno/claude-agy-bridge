@@ -230,8 +230,33 @@ def _run(argv, tree, env, timeout_s, should_cancel, deadline=None, *, pass_fds=(
             proc.stdout.close()
 
 
+MIN_BWRAP = sandbox.MIN_BWRAP  # shared with the grading sandbox; --disable-userns needs Bubblewrap 0.8.0
+
+
+def bwrap_version(tool, tree):
+    """The (major, minor, patch) that `bwrap --version` reports, or None when it cannot be run or parsed."""
+    try:
+        code, output = _run([tool, '--version'], tree, {}, PREFLIGHT_TIMEOUT_S, None)
+    except (OSError, Unavailable):
+        return None
+    return sandbox.parse_bwrap_version(output) if code == 0 else None
+
+
+def check_bwrap_version(tree):
+    """Refuse a Bubblewrap older than MIN_BWRAP on Linux; an unknown version proceeds to the startup probe."""
+    if not sys.platform.startswith('linux'):
+        return
+    tool = sandbox.executable('bwrap', '/usr/bin:/bin')
+    if tool is None:
+        return  # _bwrap_args names the missing tool
+    detail = sandbox.bwrap_too_old(bwrap_version(tool, tree), 'implement')
+    if detail:
+        raise Unavailable(detail)
+
+
 def preflight(*, tree, profile, exe, should_cancel=None, deadline=None):
     """Probe AGY under the smaller of the local startup limit and the job deadline."""
+    check_bwrap_version(tree)
     started = time.monotonic()
     end = execution_deadline(started, PREFLIGHT_TIMEOUT_S, deadline)
     job_limited = deadline is not None and deadline <= started + PREFLIGHT_TIMEOUT_S

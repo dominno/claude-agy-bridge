@@ -202,7 +202,8 @@ def test_cross_repo_jobs_survive_submitter_exit_cancel_and_resume(detached):
 
 def test_inventory_skips_bad_states_without_creating_locks(detached):
     invoke, inventory, _, _, state_dir = detached
-    assert inventory() == {'schema_version': 1, 'jobs': [], 'warnings': []}
+    assert inventory() == {'schema_version': 1, 'jobs': [], 'warnings': [
+        'No implementation jobs. Delegation queues are listed per repository: agy-bridge jobs list -C <repo>']}
     assert not state_dir.exists()
 
     stale_id, bad_id = 'a' * 32, 'b' * 32

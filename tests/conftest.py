@@ -12,6 +12,13 @@ atexit.register(lambda: os.path.exists(TEST_MARKER) and os.remove(TEST_MARKER))
 
 
 def pytest_configure(config):
+    # A shell starts background jobs with SIGINT ignored, and children inherit that ignore. Reset it so signal
+    # tests behave the same however the suite was launched, e.g. `(pytest ...) & wait`.
+    import signal
+    if signal.getsignal(signal.SIGINT) is signal.SIG_IGN:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+    if signal.getsignal(signal.SIGTERM) is signal.SIG_IGN:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
     os.environ["AGY_BRIDGE_TEST_MODE"] = "1"
     # Lets AGY_BRIDGE_HOME work while tests run; the file is removed afterwards (see config.TEST_MARKER).
     open(TEST_MARKER, "w").close()

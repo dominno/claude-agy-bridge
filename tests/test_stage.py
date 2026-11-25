@@ -724,3 +724,111 @@ def test_r5_the_task_length_is_checked_before_the_task_is_scanned(repo, monkeypa
     with pytest.raises(UsageError):
         prep(repo, files=["README.md"], task="x" * (stage.config.MAX_TASK_CHARS + 1))
     assert scanned == []
+
+
+# ---------- council round 3: projects below a home folder inside a system tree (/root in containers) ----------
+
+@pytest.fixture
+def root_home(tmp_path, monkeypatch):
+    """A stand-in for /root: a system tree that is also the home folder; scratch exceptions switched off."""
+    home = tmp_path / "root"
+    (home / "proj" / ".git").mkdir(parents=True)
+    (home / ".ssh" / "x" / ".git").mkdir(parents=True)
+    canon = stage.canonical_path(str(home))
+    monkeypatch.setattr(stage, "SYSTEM_TREES", stage.SYSTEM_TREES + (canon,))
+    monkeypatch.setattr(stage, "SYSTEM_ALLOWED_BELOW", ())
+    monkeypatch.setattr(stage, "real_homes", lambda: [canon])
+    monkeypatch.setattr(stage, "database_home", lambda: [canon])
+    monkeypatch.setenv("HOME", canon)
+    return home
+
+
+def test_r6_project_below_a_home_inside_a_system_tree_is_accepted(root_home):
+    stage.check_root(str(root_home / "proj"))
+
+
+def test_r6_home_inside_a_system_tree_itself_is_still_refused(root_home):
+    with pytest.raises(stage.Refused) as info:
+        stage.check_root(str(root_home), allow_non_git=True)
+    assert info.value.refusals[0].rule == "R6" and "home folder" in info.value.refusals[0].reason
+
+
+def test_r6_hidden_child_of_that_home_is_still_refused(root_home):
+    with pytest.raises(stage.Refused) as info:
+        stage.check_root(str(root_home / ".ssh" / "x"), allow_non_git=True)
+    refusal = info.value.refusals[0]
+    assert refusal.rule == "R6" and "inside system folder" in refusal.reason
+
+
+def test_r6_other_folders_in_the_system_tree_stay_refused(root_home, tmp_path):
+    (tmp_path / "elsewhere" / ".git").mkdir(parents=True)
+    with pytest.raises(stage.Refused) as info:
+        stage.check_root(str(tmp_path / "elsewhere"))
+    assert "inside system folder /" in info.value.refusals[0].reason
+
+
+def test_r6_a_home_at_a_system_root_does_not_lift_the_refusal(monkeypatch):
+    if not os.path.isdir("/usr/share"):
+        pytest.skip("not on this machine")
+    monkeypatch.setattr(stage, "real_homes", lambda: ["/usr"])
+    with pytest.raises(stage.Refused) as info:
+        stage.check_root("/usr/share", allow_non_git=True)
+    assert info.value.refusals[0].rule == "R6"
+
+
+def test_r6_env_only_home_inside_a_system_tree_never_lifts_the_refusal(monkeypatch):
+    """HOME=/usr/share (not a root-level system folder) with a different password-database home: still refused."""
+    if not os.path.isdir("/usr/share/man"):
+        pytest.skip("not on this machine")
+    monkeypatch.setenv("HOME", "/usr/share")
+    assert "/usr/share" in stage.real_homes() or stage.canonical_path("/usr/share") in stage.real_homes()
+    assert not any(os.path.samefile(h, "/usr/share") for h in stage.database_home())
+    with pytest.raises(stage.Refused) as info:
+        stage.check_root("/usr/share/man", allow_non_git=True)
+    assert info.value.refusals[0].rule == "R6" and "inside system folder /usr" in info.value.refusals[0].reason
+
+
+def test_r6_env_home_cannot_lift_even_when_real_homes_lists_it(tmp_path, monkeypatch):
+    """An env-only home inside a stand-in system tree: real_homes() has it, database_home() does not."""
+    tree = tmp_path / "sys"
+    (tree / "fakehome" / "proj" / ".git").mkdir(parents=True)
+    canon_tree = stage.canonical_path(str(tree))
+    fake = stage.canonical_path(str(tree / "fakehome"))
+    monkeypatch.setattr(stage, "SYSTEM_TREES", stage.SYSTEM_TREES + (canon_tree,))
+    monkeypatch.setattr(stage, "SYSTEM_ALLOWED_BELOW", ())
+    monkeypatch.setattr(stage, "real_homes", lambda: [fake])
+    monkeypatch.setattr(stage, "database_home", lambda: [])
+    with pytest.raises(stage.Refused) as info:
+        stage.check_root(str(tree / "fakehome" / "proj"))
+    assert info.value.refusals[0].rule == "R6" and "inside system folder" in info.value.refusals[0].reason
+
+
+@pytest.mark.parametrize("folder", ["/usr/src/app", "/usr/share", "/usr/bin"])
+def test_r6_system_folder_message_names_the_tree_and_a_remedy(folder):
+    if not os.path.isdir(folder):
+        pytest.skip("not on this machine")
+    with pytest.raises(stage.Refused) as info:
+        stage.check_root(folder, allow_non_git=True)
+    assert info.value.refusals[0].reason == ("the repository folder is inside system folder /usr; move the checkout "
+                                             "under $HOME or a temporary folder")
+
+
+def test_r6_exact_system_folder_message_names_it():
+    folder = next((f for f in ("/Volumes", "/opt", "/mnt", "/media") if os.path.isdir(f)), None)
+    if folder is None:
+        pytest.skip("not on this machine")
+    with pytest.raises(stage.Refused) as info:
+        stage.check_root(folder, allow_non_git=True)
+    assert "system folder %s itself" % folder in info.value.refusals[0].reason
+
+
+@pytest.mark.skipif(not os.path.isdir("/root") or os.geteuid() != 0, reason="needs a real /root and uid 0")
+def test_r6_real_root_home_project_is_accepted(tmp_path, monkeypatch):
+    project = tempfile.mkdtemp(dir="/root")
+    try:
+        os.mkdir(os.path.join(project, ".git"))
+        monkeypatch.setenv("HOME", "/root")
+        stage.check_root(project)
+    finally:
+        import shutil
+        shutil.rmtree(project)

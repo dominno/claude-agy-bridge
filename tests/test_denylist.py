@@ -60,3 +60,22 @@ def test_r1_repo_local_rules_cannot_remove_a_builtin():
     assert is_denied("x/.env", extra=["unrelated"]) is not None
 
 
+
+
+def test_r1_council_round_one_secret_files_are_denied():
+    for name in ("keys/id.ppk", ".dev.vars", "home/.vault-token", "infra/terraform.tfstate",
+                 "infra/terraform.tfstate.backup", "infra/.terraform/modules/m/main.tf", "vpn/me.ovpn", ".s3cfg",
+                 ".boto", ".bash_history", ".zsh_history", ".python_history", ".envrc", "site/wp-config.php"):
+        assert is_denied(name) is not None, name
+    for ok in ("infra/main.tf", "docs/history.md", "src/history_view.py", "wp-config-sample.php", "vars.dev.md"):
+        assert is_denied(ok) is None, ok
+
+
+def test_r1_council_round_three_secret_files_are_denied():
+    for name in (".secret", "cfg/.secrets", ".secrets/prod.yaml", "app/.secret.json", "infra/prod.tfvars",
+                 "infra/terraform.tfvars.json", "deploy/kubeconfig", "deploy/kubeconfig.yaml", "home/id_dsa",
+                 "home/id_dsa.pub", "web/.yarnrc.yml"):
+        assert is_denied(name) is not None, name
+    for ok in ("src/secret.py", "docs/kubeconfig.md", "infra/variables.tf", "infra/main.tf", "src/id_data.py",
+               "web/yarnrc.md", "docs/tfvars.md"):
+        assert is_denied(ok) is None, ok

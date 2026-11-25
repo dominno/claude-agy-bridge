@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import shlex
 
@@ -21,6 +22,44 @@ class Unavailable(config.UsageError):
 def unavailable(detail):
     return Unavailable('sandbox unavailable on this machine: %s; refusing execution. '
                        'Use --unsafe-no-sandbox explicitly to run with your privileges and network access' % detail)
+
+
+MIN_BWRAP = (0, 8, 0)  # --disable-userns, which every bwrap sandbox here passes, first shipped in Bubblewrap 0.8.0
+BWRAP_RELEASES = 'Ubuntu 22.04 ships 0.6.x; Debian 12+/Ubuntu 24.04+ qualify'
+_BWRAP_VERSION = re.compile(r'bubblewrap ([0-9]{1,4})\.([0-9]{1,4})(?:\.([0-9]{1,4}))?')
+_bwrap_versions = {}
+
+
+def parse_bwrap_version(output):
+    """(major, minor, patch) from `bwrap --version` output, or None."""
+    match = _BWRAP_VERSION.search(output)
+    return None if match is None else tuple(int(part or 0) for part in match.groups())
+
+
+def bwrap_too_old(version, what):
+    """The refusal text for a Bubblewrap older than MIN_BWRAP, or None (an unknown version proceeds)."""
+    if version is None or version >= MIN_BWRAP:
+        return None
+    return ('%s requires Bubblewrap %d.%d.%d+ (found %d.%d.%d; --disable-userns is unsupported; %s)'
+            % ((what,) + MIN_BWRAP + version + (BWRAP_RELEASES,)))
+
+
+def bwrap_version(tool, tree):
+    """The version `tool --version` reports (cached per path), or None when it cannot be run or parsed.
+
+    Runs through edit_sandbox's bounded launcher (empty environment, cwd `tree`).
+    """
+    if tool not in _bwrap_versions:
+        from . import edit_sandbox
+        _bwrap_versions[tool] = edit_sandbox.bwrap_version(tool, tree)
+    return _bwrap_versions[tool]
+
+
+def check_bwrap_version(tool, tree, what='grading'):
+    """Fail closed on a Bubblewrap older than MIN_BWRAP (the grading sandbox passes --disable-userns)."""
+    detail = bwrap_too_old(bwrap_version(tool, tree), what)
+    if detail:
+        raise unavailable(detail)
 
 
 def interpreter_binaries(command):
@@ -137,6 +176,8 @@ def linux_bindings(command):
 def unshare_command(tool, argv, tree, jail, paths, blocked):
     # unshare -n alone cannot confine files. Pair it with a private mount/PID/user
     # namespace and a minimal chroot; if namespaces/mounts are forbidden, fail closed.
+    # The chroot also stops nested user namespaces: the kernel refuses unshare(CLONE_NEWUSER) with EPERM for a
+    # chrooted process, so the checked code cannot regain mount or network capabilities in a new namespace.
     mount = executable('mount', '/usr/bin:/bin:/usr/sbin:/sbin')
     chroot = executable('chroot', '/usr/bin:/bin:/usr/sbin:/sbin')
     setpriv = executable('setpriv', '/usr/bin:/bin:/usr/local/bin')
@@ -183,9 +224,12 @@ def wrap(argv, tree, env, unsafe_no_sandbox=False, jail=None):
     elif sys.platform.startswith('linux'):
         tool = executable('bwrap', '/usr/bin:/bin:/usr/local/bin')
         if tool:
+            check_bwrap_version(tool, tree)
             paths, blocked = linux_bindings(command)
-            # PID namespace teardown kills even setsid/double-fork children.
-            result = [tool, '--unshare-all', '--die-with-parent', '--new-session', '--cap-drop', 'ALL', '--dev', '/dev']
+            # PID namespace teardown kills even setsid/double-fork children. --disable-userns stops the checked code
+            # from creating nested user namespaces (and the capabilities they grant) inside the sandbox.
+            result = [tool, '--unshare-all', '--unshare-user', '--disable-userns', '--die-with-parent', '--new-session',
+                      '--cap-drop', 'ALL', '--dev', '/dev']
             # A read-only bind of a device cannot be written and may be unopenable; --dev supplies fresh ones.
             for path in paths:
                 if path.startswith('/dev/'):

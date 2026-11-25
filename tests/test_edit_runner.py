@@ -105,13 +105,20 @@ def test_edit_transport(provider, tmp_path, scenario, code, kind):
         wrapped.append(argv)
         return argv
 
+    # Timeout and cancel skip the version probe so a slow interpreter start cannot eat the turn budget; the
+    # probe's own share of the budget is covered by test_slow_version_probe_times_out_before_launch.
+    slow = scenario in ("timeout", "cancel")
     result = runner.run_edit_agy(
-        provider, str(tmp_path), {}, None, .5 if scenario == "timeout" else 5,
+        provider, str(tmp_path), {}, None, 2 if scenario == "timeout" else 5,
         CONVERSATION if scenario == "nested" else None, scenario, ids.append,
         max_out=512, wrap=wrap, should_cancel=lambda: scenario == "cancel" and bool(ids),
+        version=(1, 5, 16) if slow else None,
     )
-    assert wrapped[0] == [provider, "--version"]
-    assert wrapped[1][-2:] == ["--print", scenario]
+    if slow:
+        assert len(wrapped) == 1 and wrapped[0][-2:] == ["--print", scenario]
+    else:
+        assert wrapped[0] == [provider, "--version"]
+        assert wrapped[1][-2:] == ["--print", scenario]
     assert result.exit_code == code
     assert result.error_kind == kind
     assert ids == ([] if scenario in ("auth", "quota") else [CONVERSATION])
@@ -129,3 +136,17 @@ def test_preflight_version_skips_second_probe(provider, tmp_path):
     )
     assert result.exit_code == 0
     assert len(commands) == 1
+
+
+def test_slow_version_probe_times_out_before_launch(tmp_path):
+    path = tmp_path / "agy"
+    path.write_text("#!" + sys.executable + "\nimport sys, time\ntime.sleep(30)\n", encoding="utf-8")
+    path.chmod(0o700)
+    wrapped = []
+    ids = []
+    result = runner.run_edit_agy(
+        str(path), str(tmp_path), {}, None, .5, None, "ok", ids.append,
+        max_out=512, wrap=lambda argv: wrapped.append(argv) or argv,
+    )
+    assert result.exit_code == config.EXIT_TIMEOUT and result.error_kind == "timeout"
+    assert wrapped == [[str(path), "--version"]] and ids == []

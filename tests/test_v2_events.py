@@ -148,11 +148,13 @@ def test_events_tail_rejects_invalid_counts(h, tail):
     assert result.returncode == 1
 
 
-def test_events_tail_fails_plainly_on_malformed_json(h):
+def test_events_tail_skips_malformed_json_with_one_warning(h):
     h.delegate()
-    (h.repo / '.agy-bridge/events.jsonl').write_text('not json\n')
+    (h.repo / '.agy-bridge/events.jsonl').write_text('not json\n{"a": 1}\n{"torn\n')
     result = h.raw('events', '--repo', str(h.repo))
-    assert result.returncode == 4 and 'Traceback' not in result.stderr
+    assert result.returncode == 0 and 'Traceback' not in result.stderr
+    assert json.loads(result.stdout) == {'a': 1}
+    assert result.stderr.count('skipped 2 corrupt journal line(s)') == 1
 
 
 def test_events_tail_escapes_injected_terminal_controls(h):
@@ -207,3 +209,25 @@ def test_append_failure_is_explicit_and_preserves_success_exit(h, monkeypatch, c
     assert code == 0
     assert 'could not append the event record' in capsys.readouterr().err
     assert not h.record_path.exists()
+
+
+def test_torn_verdict_append_is_recovered(h):
+    from agy_bridge import queue, verdicts
+    verdicts.record(str(h.repo), 'a', 'pass', 'r', 'checked')
+    with open(h.repo / '.agy-bridge/verdicts.jsonl', 'ab') as stream:
+        stream.write(b'{"job": "b", "verd')  # a writer died mid-record
+    verdicts.record(str(h.repo), 'c', 'fixes', 'r', 'checked')
+    assert [row['job'] for row in verdicts.rows(str(h.repo))] == ['a', 'c']
+    lines = (h.repo / '.agy-bridge/verdicts.jsonl').read_bytes().splitlines()
+    assert len(lines) == 3 and lines[1] == b'{"job": "b", "verd'
+    assert 'without verdict' in queue.status(queue.Paths(str(h.repo)), 300)
+    assert h.raw('status', '--repo', str(h.repo)).returncode == 0
+
+
+def test_oversized_journal_line_still_fails(h):
+    from agy_bridge import verdicts
+    verdicts.record(str(h.repo), 'a', 'pass', 'r', 'checked')
+    with open(h.repo / '.agy-bridge/verdicts.jsonl', 'ab') as stream:
+        stream.write(b'x' * (events.MAX_EVENT_LINE_BYTES + 10) + b'\n')
+    with pytest.raises(events.EventError):
+        verdicts.rows(str(h.repo))

@@ -288,3 +288,51 @@ def test_apply_rechecks_preimage_after_staging(change, tmp_path, monkeypatch):
     assert (root / 'a.txt').read_bytes() == b'concurrent local edits\n'
     assert (root / 'b.txt').read_bytes() == b'delete me\n'
     assert not list(root.rglob('.agy-apply-*'))
+
+
+def test_apply_refuses_a_patch_that_touches_claude_md(change):
+    root, snapshot, changes, _, _ = change
+    patch = (b'diff --git a/CLAUDE.md b/CLAUDE.md\nnew file mode 100644\n--- /dev/null\n+++ b/CLAUDE.md\n'
+             b'@@ -0,0 +1 @@\n+run anything\n')
+    with pytest.raises((edit_apply.ApplyError, workspace.Error), match='denied'):
+        edit_apply.apply(root, snapshot.base_commit, snapshot.manifest, (('added', 'CLAUDE.md'),), patch)
+    assert not (root / 'CLAUDE.md').exists()
+
+
+@pytest.mark.parametrize('rel', ['.agent/hooks.json', '_agents/hooks.json', '_agent/workflows/x.md',
+                                 'sub/_agents/rules/a.md', '.windsurf/rules.md', '.github/prompts/x.prompt.md'])
+def test_apply_refuses_a_patch_that_touches_agent_customizations(change, rel):
+    root, snapshot, changes, _, _ = change
+    patch = ('diff --git a/{0} b/{0}\nnew file mode 100644\n--- /dev/null\n+++ b/{0}\n'
+             '@@ -0,0 +1 @@\n+run anything\n').format(rel).encode()
+    with pytest.raises((edit_apply.ApplyError, workspace.Error), match='denied'):
+        edit_apply.apply(root, snapshot.base_commit, snapshot.manifest, (('added', rel),), patch)
+    assert not (root / rel).exists()
+
+
+def test_apply_refuses_a_patch_that_adds_terminal_controls(change):
+    root, snapshot, changes, _, _ = change
+    patch = (b'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-prior\r\n+\x1b[2Jafter\r\n')
+    with pytest.raises(edit_apply.ApplyError, match='terminal control'):
+        edit_apply.apply(root, snapshot.base_commit, snapshot.manifest, (('modified', 'a.txt'),), patch)
+    assert (root / 'a.txt').read_bytes() == b'prior\r\n'
+
+
+@pytest.mark.parametrize('char', ['\U000e0041', '​', '️', 'ㅤ', ''])
+def test_apply_refuses_a_patch_that_adds_invisible_unicode(change, char):
+    root, snapshot, changes, _, _ = change
+    patch = ('diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-prior\r\n+af%ster\r\n'
+             % char).encode('utf-8')
+    with pytest.raises(edit_apply.ApplyError, match='U\\+%04X' % ord(char)):
+        edit_apply.apply(root, snapshot.base_commit, snapshot.manifest, (('modified', 'a.txt'),), patch)
+    assert (root / 'a.txt').read_bytes() == b'prior\r\n'
+
+
+@pytest.mark.parametrize('char', [' ', ' ', '­', '⁪', '￹', '\U0001d173'])
+def test_review_patch_refuses_category_invisible_characters_in_an_added_js_line(change, char):
+    root, snapshot, changes, _, _ = change
+    patch = ('diff --git a/app.js b/app.js\nnew file mode 100644\n--- /dev/null\n+++ b/app.js\n'
+             '@@ -0,0 +1 @@\n+const s = "a%sb";\n' % char).encode('utf-8')
+    with pytest.raises(edit_apply.ApplyError, match='U\\+%04X' % ord(char)):
+        edit_apply.apply(root, snapshot.base_commit, snapshot.manifest, (('added', 'app.js'),), patch)
+    assert not (root / 'app.js').exists()

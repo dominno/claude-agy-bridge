@@ -6,6 +6,7 @@ import errno
 import json
 import os
 import stat
+import sys
 import time
 from collections import deque
 
@@ -60,7 +61,8 @@ def open_log(root, create=True, name="events.jsonl"):
             _check_file(info)
         if create:
             os.fchmod(parent, 0o700)
-        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT if create else os.O_RDONLY
+        # Appenders also read the last byte to repair a torn record, so they open read-write.
+        flags = os.O_RDWR | os.O_APPEND | os.O_CREAT if create else os.O_RDONLY
         for attempt in range(3):
             try:
                 fd = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=parent)
@@ -98,12 +100,17 @@ def append(fd, record):
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
+            size = os.fstat(fd).st_size
+            if size and os.pread(fd, 1, size - 1) != b'\n':
+                # A writer died mid-record: end the fragment so this record stays a line of its own.
+                data = b'\n' + data
             view = memoryview(data)
             while view:
                 written = os.write(fd, view)
                 if not written:
                     raise EventIOError('could not append the event record')
                 view = view[written:]
+            os.fsync(fd)
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
     except OSError:
@@ -116,6 +123,7 @@ def tail(root, count, name="events.jsonl"):
         return []
     try:
         fcntl.flock(fd, fcntl.LOCK_SH)
+        skipped = 0
         with os.fdopen(os.dup(fd), 'rb') as stream:
             lines = deque(maxlen=count)
             while True:
@@ -124,10 +132,18 @@ def tail(root, count, name="events.jsonl"):
                     raise EventError('event log contains an oversized record')
                 if not line:
                     break
-                lines.append(line)
-        # Re-encode JSON so even a tampered record cannot print terminal controls.
-        return [json.dumps(json.loads(line), sort_keys=True, ensure_ascii=True) for line in lines]
-    except (OSError, ValueError):
-        raise EventError('event log is unreadable or contains invalid JSON')
+                if not line.strip():
+                    continue
+                try:
+                    # Re-encode JSON so even a tampered record cannot print terminal controls.
+                    lines.append(json.dumps(json.loads(line), sort_keys=True, ensure_ascii=True))
+                except (ValueError, RecursionError):
+                    skipped += 1  # a torn or corrupt record; later appends start on a fresh line
+        if skipped:
+            sys.stderr.write('agy-bridge: warning: skipped %d corrupt journal line(s) in %s/%s\n'
+                             % (skipped, SCRATCH_DIR, name))
+        return list(lines)
+    except OSError:
+        raise EventError('event log is unreadable')
     finally:
         os.close(fd)

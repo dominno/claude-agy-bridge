@@ -156,6 +156,6 @@ def load_extra_deny(repo_root: str) -> List[str]:
 def validate_model(name: Optional[str]) -> Optional[str]:
     if name is None:
         return None
-    if not isinstance(name, str) or not re.match(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$", name):
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}", name):
         raise UsageError("model name has characters that are not allowed")
     return name

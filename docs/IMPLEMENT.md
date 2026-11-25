@@ -7,7 +7,8 @@ the same conversation.
 
 ## Set up the worker
 
-Use Linux with Bubblewrap in `/usr/bin` or `/bin` and working unprivileged user namespaces, Git, and an AGY CLI native
+Use Linux with Bubblewrap 0.8.0 or later (the sandbox passes `--disable-userns`; Ubuntu 22.04 ships 0.6.x, and
+Debian 11 and RHEL 9 also ship older versions; Debian 12+/Ubuntu 24.04+ qualify) in `/usr/bin` or `/bin` and working unprivileged user namespaces, Git, and an AGY CLI native
 binary at version 1.5.16 or later in major version 1. Use the root of a Git checkout whose Git directory is inside
 the checkout. The worker runs `agy --version` inside Bubblewrap before sending a task. Use a Linux host
 or VM with working user namespaces if your container disables them. [Recorded compatibility and evidence](COMPAT.md).
@@ -59,6 +60,40 @@ Automatic AGY customizations, secret-shaped input, links, and special files are 
 including new files. Use `--write-dir .` for the full isolated tree. The bridge validates the authorization against
 the actual change inventory.
 
+Some paths are never part of an implementation workspace, never exported as changes and refused again at apply time,
+because an edit there would steer the next coding agent or run code on checkout, commit or open: the AGY
+customization roots `.agents/`, `.agent/`, `_agents/` and `_agent/`, `AGENTS.md`, `AGENTS.override.md`, `GEMINI.md`,
+`CLAUDE.md`, `CLAUDE.local.md`, `.claude/`, `.cursorrules`, `.cursor/`, `.windsurfrules`, `.windsurf/`, `.clinerules`,
+`.roo/`, `.kiro/`, `.github/copilot-instructions.md`, `.github/instructions/`, `.github/prompts/`, `.mcp.json`,
+`.agy-bridge.json`, `.gitmodules`, `.envrc`, `.direnv/`, `.vscode/`, `.idea/`, `.githooks/`, `.husky/`,
+`.pre-commit-config.yaml` and `.devcontainer/`. Names match at any depth (a `sub/CLAUDE.md` or
+`sub/_agents/rules/a.md` is refused too); the `.github/...` entries match from the repository root. CI files such as
+`.github/workflows/` stay editable, so review them in the patch like any other change. Repository deny rules in
+`.agy-bridge.json` add to this list.
+
+Added or modified files may not gain terminal control or invisible characters:
+
+- C0 controls other than tab and newline, a carriage return not followed by a newline, DEL and C1 controls;
+- the bidirectional overrides and isolates U+202A-U+202E and U+2066-U+2069;
+- invisible Unicode (`stage.is_invisible`): every format (Unicode category Cf), line and paragraph separator (Zl/Zp,
+  including U+2028 and U+2029), private use (Co) and surrogate (Cs) code point, which covers among others U+00AD,
+  U+061C, U+0600-U+0605, U+180E, the zero-width and format characters U+200B-U+200F, U+2060-U+2064 and
+  U+206A-U+206F, U+FFF9-U+FFFB and U+FEFF (allowed only at offset 0 of a file as a byte order mark); plus U+034F,
+  the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0, U+17B4/U+17B5, U+1D173-U+1D17A, variation selectors
+  U+FE00-U+FE0F and U+E0100-U+E01EF, and tag characters U+E0000-U+E007F.
+
+A line holding such characters is tolerated only when an identical line already exists in the
+original file (each original line covers one copy); any other such line, including an existing escape swapped for a
+different one on the same line, refuses the export (and the apply) and the refusal names the file, line and first
+code point (for example `U+E0041`), never the raw character. When `jobs patch` writes to a terminal, any remaining
+non-printable character is shown as an escape such as `\x1b` and invisible characters as `\u{200b}`; written to a
+pipe or file it still shows the invisible class as `\u{XXXX}` markers and keeps every other byte. Pass `--raw` for
+the exact bytes whose SHA-256 `jobs apply --sha256` expects.
+
+Answers from AGY (delegate output, queue result files and the check-output tail of implement jobs) have the same
+invisible characters removed; when any were removed a final line says `note: N invisible Unicode characters
+removed` (in `--cite` mode the note is a diagnostic on stderr, so it never counts as an unverified line).
+
 ## Inspect and resume
 
 List jobs to find the ID if you closed the submitting session. Add `--active` for currently running work and `--json`
@@ -86,18 +121,32 @@ and start a new job.
 `verified` means the configured check passed against the captured patch. `ready` means the job produced a patch without
 a configured check. `checks_failed` includes the last nonzero check result. The check uses the supplied JSON argv, a
 system or workspace-relative executable, and a separate offline Bubblewrap sandbox. Review changes to any files that
-define the check along with the rest of the patch. Put required tools on the host
+define the check along with the rest of the patch. A `verified` job records `check_inputs_changed`: the changed
+paths that are an argv path of `--check` (argv[0] included, normalised) or lie under one (`pytest tests` covers
+`tests/test_x.py`; a bare `.` does not count), a file named `conftest.py`, `pytest.ini`,
+`tox.ini`, `setup.cfg`, `pyproject.toml`, `noxfile.py`, `setup.py`, `package.json`, `Makefile`, `GNUmakefile`,
+`makefile`, `justfile`, `sitecustomize.py` or `usercustomize.py`, a `*.pth` file, or a file under
+`.github/workflows/`. When the list is not empty, `jobs show` (JSON `warning` field and stderr) and `jobs list` print
+`WARN check inputs changed by the agent: <paths>; review them before trusting verified`: the agent may have made
+the check pass by changing the check itself, so review those files first. The phase stays `verified`. Put required tools on the host
 software image and include the project inputs explicitly. CPU, memory, and disk limits depend on the host. The AGY
-sandbox allows provider network access and mounts the isolated writable profile. The private job directory under
+sandbox allows provider network access and mounts the isolated writable profile. It uses bwrap `--share-net`,
+the host network namespace: the agent can reach host loopback services, the local network, cloud instance metadata
+(`169.254.169.254`) and abstract-namespace Unix sockets (X11, some D-Bus). Only AGY's session policy, which denies
+its command, URL and MCP tools, keeps it from using them. Run implementation jobs in a VM or container without
+sensitive loopback services, and on cloud VMs enforce IMDSv2 with hop limit 1
+([network exposure](THREAT_MODEL.md#network-exposure-of-the-agy-agent)). The private job directory under
 `~/.agy-bridge/implement/` keeps the files, patch, and state. A failed check's status may include a filtered excerpt of
-its output. Remove completed job directories when you no longer need their artifacts.
+its output. Remove completed job directories when you no longer need their artifacts: `agy-bridge jobs remove
+"$job_id"` for one job, or `agy-bridge jobs prune --older-than 7d --dry-run` to list old finished jobs before pruning.
+An unapplied `ready`/`verified` job or an unfinished one needs `--force`; a running worker is never removed.
 [Full command and status reference](CLI.md#implementation-jobs).
 
 ## Apply after review
 
 ```sh
 patch_path=$(mktemp)
-agy-bridge jobs patch "$job_id" > "$patch_path"
+agy-bridge jobs patch "$job_id" --raw > "$patch_path"
 cat "$patch_path"
 ```
 
@@ -106,6 +155,7 @@ file with `patch_sha256` from `jobs show`:
 
 ```sh
 reviewed_patch_sha256=$(sha256sum "$patch_path" | cut -d ' ' -f 1)
+# macOS has no sha256sum by default: reviewed_patch_sha256=$(shasum -a 256 "$patch_path" | cut -d ' ' -f 1)
 agy-bridge jobs apply "$job_id" --sha256 "$reviewed_patch_sha256"
 git diff
 ```

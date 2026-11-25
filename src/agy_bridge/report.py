@@ -9,17 +9,42 @@ from typing import TYPE_CHECKING, Optional, Tuple
 
 from . import config
 from .config import SCRATCH_DIR, UsageError
+from .stage import strip_invisible
 
 if TYPE_CHECKING:
     from .runner import RunResult
 
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
-_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# Same set as stage._TERMINAL_UNSAFE minus tab, newline and carriage return (normalised first): C0 controls, DEL,
+# C1 controls (including the 8-bit CSI \x9b) and bidi embeddings, overrides and isolates.
+_CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+# Invisible characters (stage.is_invisible: every format, private use and surrogate code point plus the explicit
+# INVISIBLE_CLASS ranges such as tag characters, variation selectors and Hangul fillers) are removed and counted,
+# so removal is never silent.
+INVISIBLE_NOTE = "note: %d invisible Unicode characters removed"
+# NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR end a line; keep them as plain newlines.
+_LINE_BREAKS = re.compile("[\x85\u2028\u2029]")
+
+
+def clean_counted(raw: bytes, preserve_lines: bool = False) -> Tuple[str, int]:
+    """Clean text as clean_answer does, without the note; return (text, invisible characters removed)."""
+    text = raw.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
+    text = _CONTROL.sub("", _ANSI.sub("", _LINE_BREAKS.sub("\n", text)))
+    text, removed = strip_invisible(text)
+    return (text if preserve_lines else text.strip()), removed
+
+
+def with_note(text: str, removed: int) -> str:
+    """Append the invisible-character note line when any were removed."""
+    if not removed:
+        return text
+    return text + ("" if not text or text.endswith("\n") else "\n") + INVISIBLE_NOTE % removed
+
 
 def clean_answer(raw: bytes, preserve_lines: bool = False) -> str:
-    text = raw.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
-    text = _CONTROL.sub("", _ANSI.sub("", text))
-    return text if preserve_lines else text.strip()
+    """Strip ANSI sequences, controls and invisible Unicode; a final note line says how many invisible
+    characters were removed."""
+    return with_note(*clean_counted(raw, preserve_lines))
 
 
 def classify(result: RunResult, answer: str) -> int:

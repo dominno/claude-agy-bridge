@@ -12,6 +12,23 @@ Verdicts are append-only JSONL in `.agy-bridge/verdicts.jsonl`, using the same a
 single-link, 0600, locked journal implementation as events. They contain time, job, verdict (`pass`, `fixes`,
 `reject`), reader, evidence and optional note. Do not put task or answer text in evidence/notes. No model response
 is automatically marked verified. Status lists result names with no verdict; a later verdict is another record.
+A `pass` verdict needs a result, found in one of these locations:
+
+- `<results>/<job>.md` (default `.agy-bridge/results/`; a queue run's result), unless the job is archived in
+  `<queue>/failed/` without a `done/` archive (see below);
+- `<queue>/done/<job>.job` (default `.agy-bridge/queue/done/`);
+- `.agy-bridge/delegate/<job>.md`, the answer file of a direct delegate (`--out .agy-bridge/delegate/<job>.md`),
+  accepted only as a regular, owned, single-link file (a symlink is ignored).
+
+Otherwise the pass is refused (exit 1, nothing written): a job only pending in `<queue>/<job>.job` gets
+`job "<job>" is still pending (no result yet); run agy-bridge queue run ...`, a job archived in `<queue>/failed/`
+and not in `done/` gets `job "<job>" failed or was cancelled (...); record fixes or reject, or pass --force` even
+when `<results>/<job>.md` exists, because a failed agy run, an invalid job and `queue cancel` all publish a
+failure report there, not an answer; and an unknown job names the searched folders
+and recent jobs. Pass `--force` to record it anyway. For a queue run with `--queue-dir`/`--results-dir`, pass the
+same options to `verdict` (the journal stays `.agy-bridge/verdicts.jsonl`). A `fixes` or `reject` verdict on an
+unknown or pending job is recorded with a warning, because a delegate that failed or was refused (for
+example exit 4) writes no result file and its reader must still be able to reject it.
 
 ## Trusted case format
 
@@ -60,10 +77,14 @@ execute model-written code when the checks import/run the changed files. Executi
   Forking and execution of other binaries are denied, so tests requiring subprocesses fail within the sandbox. A custom
   interpreter may live outside the repository; its executable, virtualenv lib/config and base runtime are
   read-only inputs. Copy other required inputs through `files`.
-- Linux: `bwrap` uses private filesystem/network/PID namespaces, a minimal read-only runtime and writable
-  scratch tree. When absent, `unshare` uses user/mount/network/PID namespaces and a minimal chroot with the
-  same bindings; `unshare -n` alone is insufficient. It requires `mount`, `chroot`, `setpriv` and permitted
-  user namespaces; capabilities are dropped before checks run.
+- Linux: `bwrap` uses private user/filesystem/network/PID namespaces (`--unshare-all --unshare-user
+  --disable-userns`), a minimal read-only runtime and writable scratch tree; `--disable-userns` stops the checked
+  code from creating nested user namespaces. It needs Bubblewrap 0.8.0 or later: an older `bwrap` fails closed with
+  `grading requires Bubblewrap 0.8.0+ (found X.Y.Z; --disable-userns is unsupported; Ubuntu 22.04 ships 0.6.x;
+  Debian 12+/Ubuntu 24.04+ qualify)` (an unparseable version proceeds to the preflight). When `bwrap` is absent,
+  `unshare` uses user/mount/network/PID namespaces and a minimal chroot with the same bindings; `unshare -n` alone
+  is insufficient. It requires `mount`, `chroot`, `setpriv` and permitted user namespaces; capabilities are
+  dropped before checks run, and the chroot makes a nested `unshare(CLONE_NEWUSER)` fail with EPERM.
   Credential folders and `.git`/`.env*` within runtime bindings are hidden. Namespace teardown kills detached
   children, including children that call `setsid()`.
 - Before any checks or patch strategies, a sandbox preflight runs the case's Python interpreter with
@@ -129,7 +150,10 @@ bin/agy-bridge apply-diff table measurement.json other.jsonl --repo /path/to/rep
 Markdown uses the first `diff`/`patch` fence (or an unlabelled unified diff fence); `.diff` and `.patch` inputs
 are raw. Only unified text patches are accepted. Traversal, absolute targets other than `/dev/null` file
 creation/deletion markers, denylisted paths (including repository extra `deny` rules), symlink, rename/copy
-and binary patches refuse before application. Every header must resolve to a `solution_files` destination;
+and binary patches refuse before application. Each hunk's declared line counts are enforced: beyond those counts,
+any line that `patch` (which strips leading whitespace) or `git apply --recount` could read as a file header, hunk
+header or ed command refuses the diff, so an indented header block after a valid hunk cannot add a file such as
+`conftest.py` or rewrite the check. Plain miscounted context lines are still accepted. Every header must resolve to a `solution_files` destination;
 when that list is absent/empty, only declared `files` destinations are eligible. Test files and undeclared new
 files cannot be changed when `solution_files` is provided. Prefix stripping is validated for each strategy
 before its resulting tree can run checks.
@@ -149,4 +173,6 @@ and least-squares `seconds = intercept + slope * bytes` with a recommended maxim
 A fit requires at least five points, distinct byte sizes and a useful positive slope; otherwise the report uses
 median/p90 and makes no byte recommendation. `--results-dir` follows queue directory safety rules. Events and
 result headers are reported separately to avoid double-counting or mixing attempt and retained-round metrics.
-Only headers before attempts/rounds are parsed; model prose cannot invent timing samples. Estimates are not deadlines.
+Only headers before attempts/rounds are parsed; model prose cannot invent timing samples. Each result file is read
+up to its first 64 KiB, and the fallback model pattern is line-local and bounded, so a crafted result cannot hang
+`stats`. Estimates are not deadlines.
