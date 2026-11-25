@@ -232,7 +232,8 @@ are done (System Settings → Users & Groups, "Delete the home folder"). As your
 
 Use a disposable Linux user or VM, Git, Python, AGY CLI 1.5.16 or later in major version 1, and Bubblewrap 0.8.0 or
 later (`bwrap --version`; Ubuntu 22.04 ships 0.6.x, Debian 12+/Ubuntu 24.04+ qualify) with unprivileged user
-namespaces. All files in this fixture are synthetic. The example uses `GEMINI_API_KEY` from your
+namespaces. On macOS the same steps run under `/usr/bin/sandbox-exec` instead of Bubblewrap; sign the profile in once
+with `HOME="$profile" agy` before submitting without `--gemini-api-key`. All files in this fixture are synthetic. The example uses `GEMINI_API_KEY` from your
 environment. For another supported credential setup, see the [implementation guide](IMPLEMENT.md).
 
 ### Create a fixture and preview it

@@ -1,4 +1,8 @@
-"""Isolated Linux processes for implementation jobs and their test commands (the implementation sandbox adapter)."""
+"""Isolated processes for implementation jobs and their test commands (the implementation sandbox adapter).
+
+Linux uses Bubblewrap (built here); macOS uses sandbox-exec with the policies built in adapters/edit_macos.py.
+Profile validation, process supervision and the error contract are shared by both backends.
+"""
 from __future__ import annotations
 
 import contextlib
@@ -15,8 +19,8 @@ import time
 from ..core import config, rootcheck
 from ..port import process
 from ..port.edit_sandbox import CleanupError, DeadlineExceeded, InfrastructureError, Unavailable  # noqa: F401
-from . import host_tools
-from .edit_runtime import GUEST_DEV, GUEST_PROC, GUEST_PROFILE, GUEST_TMP, execution_deadline
+from . import edit_macos, host_tools
+from .edit_runtime import GUEST_DEV, GUEST_PRIVATE_PATHS, GUEST_PROC, GUEST_PROFILE, GUEST_TMP, execution_deadline
 
 
 GUEST_TREE = '/workspace'
@@ -60,7 +64,7 @@ def validate_profile(path, repo=None):
         if _nested(repo, profile) or _nested(profile, repo):
             raise config.UsageError('AGY profile must be outside the source repository')
     for name in ('.agents', 'AGENTS.md', 'GEMINI.md', '.gemini/AGENTS.md', '.gemini/GEMINI.md',
-                 '.gemini/config', '.gemini/antigravity-cli/skills', '.gemini/antigravity-cli/plugins',
+                 '.gemini/antigravity-cli/skills', '.gemini/antigravity-cli/plugins',
                  '.gemini/antigravity-cli/hooks.json', '.gemini/antigravity-cli/mcp_config.json',
                  '.gemini/antigravity-cli/mcp_servers.json'):
         if os.path.lexists(os.path.join(profile, name)):
@@ -69,29 +73,70 @@ def validate_profile(path, repo=None):
         if os.path.islink(os.path.join(profile, name)):
             raise config.UsageError('AGY profile contains a symlink at %s' % name)
     _check_settings(profile)
+    _check_default_config(profile)
     return profile
 
 
-def _check_settings(profile):
-    path = os.path.join(profile, '.gemini/antigravity-cli/settings.json')
+def _read_json(path, label, empty=None):
+    """Parse a small regular profile file without following links; None when it is missing."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
-        return
+        return None
     except OSError:
-        raise config.UsageError('could not safely open dedicated AGY profile settings') from None
+        raise config.UsageError('could not safely open dedicated AGY profile %s' % label) from None
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 65536:
-            raise config.UsageError('dedicated AGY profile settings must be a regular file up to 64 KiB')
+            raise config.UsageError('dedicated AGY profile %s must be a regular file up to 64 KiB' % label)
         with os.fdopen(fd, 'rb', closefd=False) as file:
-            settings = json.loads(file.read(65537))
+            data = file.read(65537)
+        value = json.loads(data) if data.strip() or empty is None else empty
     except (ValueError, RecursionError):
-        raise config.UsageError('dedicated AGY profile settings must contain a JSON object') from None
+        raise config.UsageError('dedicated AGY profile %s must contain a JSON object' % label) from None
     finally:
         os.close(fd)
-    if not isinstance(settings, dict):
-        raise config.UsageError('dedicated AGY profile settings must contain a JSON object')
+    if not isinstance(value, dict):
+        raise config.UsageError('dedicated AGY profile %s must contain a JSON object' % label)
+    return value
+
+
+# What AGY 1.5.17 writes to .gemini/config on its first run (measured on macOS): an empty MCP file, its built-in
+# swarm plugin switch, a migration marker and the default CLI project. Anything else there is a customization.
+DEFAULT_CONFIG_ENTRIES = {'.migrated', 'config.json', 'mcp_config.json', 'projects'}
+DEFAULT_PLUGINS = ({}, {'swarm': {'enabled': True}})
+DEFAULT_PROJECT = {'id': 'default-cli-project', 'name': 'CLI Project', 'projectResources': {}}
+
+
+def _check_default_config(profile):
+    root = os.path.join(profile, '.gemini/config')
+    if not os.path.lexists(root):
+        return
+    refused = config.UsageError('AGY profile must be dedicated to implementation and free of customizations '
+                                '(.gemini/config differs from the AGY defaults)')
+    if os.path.islink(root) or not os.path.isdir(root) or not set(os.listdir(root)) <= DEFAULT_CONFIG_ENTRIES:
+        raise refused
+    marker = os.path.join(root, '.migrated')
+    if os.path.lexists(marker) and (not stat.S_ISREG(os.lstat(marker).st_mode) or os.lstat(marker).st_size):
+        raise refused
+    if (_read_json(os.path.join(root, 'mcp_config.json'), 'MCP configuration', empty={}) or {}).get('mcpServers'):
+        raise refused
+    settings = _read_json(os.path.join(root, 'config.json'), 'configuration') or {}
+    if set(settings) - {'plugins'} or settings.get('plugins', {}) not in DEFAULT_PLUGINS:
+        raise refused
+    projects = os.path.join(root, 'projects')
+    if os.path.lexists(projects):
+        if os.path.islink(projects) or not os.path.isdir(projects) or \
+                not set(os.listdir(projects)) <= {'default-cli-project.json'}:
+            raise refused
+        if _read_json(os.path.join(projects, 'default-cli-project.json'), 'project') not in (None, DEFAULT_PROJECT):
+            raise refused
+
+
+def _check_settings(profile):
+    settings = _read_json(os.path.join(profile, '.gemini/antigravity-cli/settings.json'), 'settings')
+    if settings is None:
+        return
     active_extensions = ('hooks', 'mcpServers', 'customModelsConfig', 'sandboxProxy', 'statusLine', 'title')
     if any(settings.get(key) for key in active_extensions):
         raise config.UsageError('dedicated AGY profile settings may not enable hooks, external tools or custom endpoints')
@@ -109,7 +154,7 @@ def agent_environment(*, use_api_key=False):
 
 def _bwrap_args(network):
     if not sys.platform.startswith('linux'):
-        raise _unavailable('implement requires Linux and Bubblewrap')
+        raise _unavailable('implement requires Linux with Bubblewrap or macOS with sandbox-exec')
     tool = host_tools.executable('bwrap', '/usr/bin:/bin')
     if tool is None:
         raise _unavailable('Bubblewrap was not found in /usr/bin or /bin')
@@ -140,6 +185,23 @@ def _bwrap_args(network):
     return argv
 
 
+def _macos():
+    """True on darwin, where sandbox-exec replaces Bubblewrap; refuse a Mac without sandbox-exec."""
+    if sys.platform != 'darwin':
+        return False
+    detail = edit_macos.available()
+    if detail:
+        raise _unavailable(detail)
+    return True
+
+
+def agent_private_paths(*, tree, profile):
+    """Directory prefixes AGY's own file tools must not touch (its session deny list)."""
+    if _macos():
+        return edit_macos.agent_private_paths(os.path.realpath(profile), os.path.realpath(tree))
+    return GUEST_PRIVATE_PATHS
+
+
 def _workspace_args(tree):
     return ['--bind', tree, GUEST_TREE, '--chdir', GUEST_TREE, '--remount-ro', '/']
 
@@ -153,6 +215,8 @@ def agent_command(argv, *, tree, profile):
     source = os.path.realpath(argv[0])
     if not os.path.isfile(source) or not os.access(source, os.X_OK):
         raise config.UsageError('AGY binary must be an executable file')
+    if _macos():
+        return edit_macos.agent_command(source, argv[1:], tree=tree, profile=profile)
     command = _bwrap_args(network=True)
     command += ['--ro-bind', source, GUEST_AGY, '--bind', profile, GUEST_PROFILE,
                 '--setenv', 'PATH', '/opt/agy/bin']
@@ -252,7 +316,7 @@ def preflight(*, tree, profile, exe, should_cancel=None, deadline=None):
     try:
         code, detail = _run(command, tree, {}, PREFLIGHT_TIMEOUT_S, should_cancel, end)
     except OSError as exc:
-        raise _unavailable('could not start Bubblewrap: %s' % exc.strerror) from None
+        raise _unavailable('could not start %s: %s' % ('sandbox-exec' if _macos() else 'Bubblewrap', exc.strerror)) from None
     if code == 124 and job_limited:
         raise DeadlineExceeded('job deadline reached during the AGY version probe')
     if code:
@@ -278,6 +342,18 @@ def _verify_test_exit(status_file, returncode):
         raise error
 
 
+def _macos_test(argv, tree, timeout_s, should_cancel, end):
+    # sandbox-exec has no status channel: its own failures print a `sandbox-exec:` line and exit nonzero.
+    with tempfile.TemporaryDirectory(prefix='agy-check-home-') as scratch:
+        command = edit_macos.check_command(argv, tree=tree, scratch=os.path.realpath(scratch))
+        if command is None:
+            raise InfrastructureError('offline check sandbox could not resolve the check executable')
+        code, output = _run(command, tree, {}, timeout_s, should_cancel, end)
+        if edit_macos.launch_failed(code, output):
+            raise InfrastructureError('offline check sandbox could not confirm that its executable started')
+        return code, output
+
+
 def run_test(argv, *, tree, timeout_s, should_cancel=None, deadline=None):
     """Run one trusted argv in a writable disposable test tree, offline."""
     end = execution_deadline(time.monotonic(), timeout_s, deadline)
@@ -287,6 +363,8 @@ def run_test(argv, *, tree, timeout_s, should_cancel=None, deadline=None):
     if argv[0].startswith('/') and Path(argv[0]).parent not in map(Path, SYSTEM_PATH.split(':')):
         raise config.UsageError('use a system test executable or a workspace-relative path')
     try:
+        if _macos():
+            return _macos_test(argv, tree, timeout_s, should_cancel, end)
         with tempfile.TemporaryFile() as status_file:
             status_fd = status_file.fileno()
             return _run(_test_command(argv, tree, status_fd), tree, {}, timeout_s, should_cancel, end,

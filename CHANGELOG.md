@@ -2,8 +2,23 @@
 
 ## Unreleased
 
+### Added
+
+- `implement` (`jobs start`, the worker, `--check` and `doctor --implementation`) runs on macOS. AGY runs under
+  `/usr/bin/sandbox-exec` with a generated default-deny policy: `HOME` is the dedicated profile, the cwd is the
+  private job tree, `TMPDIR` is `<profile>/tmp`; reads only of OS libraries, the resolved AGY binary, the tree and
+  the profile; writes only to the tree and the profile; no fork and no other executable; no Keychain (only
+  `com.apple.trustd.agent` among Mach services); host network like Bubblewrap `--share-net`; personal credential
+  folders denied after every allowance. `--check` runs offline in the grading Seatbelt profile on a separate copy.
+  Linux keeps Bubblewrap; other systems are refused. AGY's own file tools are also denied the real profile path,
+  credential folders, the job folder's other entries and `.git/` above the tree (an unlisted path outside the
+  workspace makes print-mode AGY end the turn with `permission`). Verified end to end on macOS 13 with AGY 1.5.17.
+
 ### Fixed
 
+- `doctor --implementation` and `jobs start` no longer refuse a dedicated profile after AGY's first run: AGY 1.5.17
+  writes `.gemini/config` on its first start. The profile check now accepts exactly AGY's defaults there and still
+  refuses MCP servers, other plugins, extra files or a changed default project.
 - The launcher and detached workers no longer write `__pycache__` into the installed skill directory.
 
 ### Security

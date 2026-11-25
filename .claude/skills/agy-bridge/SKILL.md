@@ -1,6 +1,6 @@
 ---
 name: agy-bridge
-description: Hand bounded read-only tasks and isolated Linux coding jobs to Google's Antigravity CLI (agy) through a local bridge script that checks every file before it is sent. Actions are delegate, dry-run, queue, implement, jobs, status and doctor. Files are sent only after the user confirms the manifest.
+description: Hand bounded read-only tasks and isolated coding jobs (Linux or macOS) to Google's Antigravity CLI (agy) through a local bridge script that checks every file before it is sent. Actions are delegate, dry-run, queue, implement, jobs, status and doctor. Files are sent only after the user confirms the manifest.
 argument-hint: "<delegate|dry-run|queue|implement|jobs|status|doctor> [task, files or options]"
 disable-model-invocation: true
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/agy-bridge dry-run *) Bash("${CLAUDE_SKILL_DIR}/scripts/agy-bridge" dry-run *) Bash(${CLAUDE_SKILL_DIR}/scripts/agy-bridge events *) Bash("${CLAUDE_SKILL_DIR}/scripts/agy-bridge" events *) Bash(${CLAUDE_SKILL_DIR}/scripts/agy-bridge doctor *) Bash("${CLAUDE_SKILL_DIR}/scripts/agy-bridge" doctor *) Bash(${CLAUDE_SKILL_DIR}/scripts/agy-bridge jobs list *) Bash("${CLAUDE_SKILL_DIR}/scripts/agy-bridge" jobs list *) Bash(${CLAUDE_SKILL_DIR}/scripts/agy-bridge queue add --dry-run *) Bash("${CLAUDE_SKILL_DIR}/scripts/agy-bridge" queue add --dry-run *) Bash(${CLAUDE_SKILL_DIR}/scripts/agy-bridge queue status *) Bash("${CLAUDE_SKILL_DIR}/scripts/agy-bridge" queue status *) Bash(${CLAUDE_SKILL_DIR}/scripts/agy-bridge status *) Bash("${CLAUDE_SKILL_DIR}/scripts/agy-bridge" status *)
@@ -55,8 +55,9 @@ Rules for every action:
 Run `"<skill>/scripts/agy-bridge" doctor --repo <absolute project root> [--offline]` and report each line as ok or
 fail with its reason. `--offline` skips the one check that needs network and sign-in. The check changes nothing
 outside `~/.agy-bridge/` and the temp folder. Do not try to fix a failure by installing or signing in on the user's
-behalf; tell them what failed. `doctor --implementation --profile PATH` checks whether AGY can start in the Linux
-implementation sandbox: it runs `agy --version` in an empty workspace and creates no job.
+behalf; tell them what failed. `doctor --implementation --profile PATH` checks whether AGY can start in the
+implementation sandbox (Bubblewrap on Linux, `sandbox-exec` on macOS): it runs `agy --version` in an empty workspace
+and creates no job.
 
 ## dry-run
 
@@ -137,9 +138,10 @@ authorization to run a case from a model answer. [Grading](references/GRADING.md
 
 ## implement
 
-`implement` requires Linux with Bubblewrap 0.8.0 or later and working unprivileged user namespaces; it does not run
-on macOS. On macOS use the read-only `delegate` or `queue` actions instead. On Linux, check the host first with the
-`doctor --implementation --profile PATH` action. Host and authentication requirements:
+`implement` runs on Linux with Bubblewrap 0.8.0 or later and working unprivileged user namespaces, or on macOS with
+`/usr/bin/sandbox-exec` (a default-deny Seatbelt policy). Other systems are refused. Check the host first with the
+`doctor --implementation --profile PATH` action. The profile is a dedicated AGY home signed in once by the user;
+never sign in on the user's behalf. Host and authentication requirements:
 [implementation guide](references/IMPLEMENT.md).
 
 For an existing job, use the command that matches the request:
@@ -155,8 +157,9 @@ For a new task:
    `"<skill>/scripts/agy-bridge" implement --dry-run --repo "<absolute project root>" --file "<path>" -- "<task>"`.
    Add explicit `--file` or `--glob` arguments for the code, tests and build configuration the task needs. Google
    can process every file in the manifest.
-2. Tell the user that the AGY agent shares the host network (bwrap `--share-net`): it can reach host loopback
-   services, the LAN and cloud instance metadata, held back only by AGY's tool policy. Recommend a VM or container
+2. Tell the user that the AGY agent shares the host network (bwrap `--share-net` on Linux, `(allow network*)` on
+   macOS): it can reach host loopback services, the LAN and cloud instance metadata, held back only by AGY's tool
+   policy. Recommend a VM or container
    without sensitive local services (IMDSv2 with hop limit 1 on cloud VMs).
 3. Confirm before launch. Show the dry-run manifest and the network note; unless the user's invoking message already
    approved exactly this file set, `--write-dir` and `--check`, STOP, ask the user to confirm and launch only after

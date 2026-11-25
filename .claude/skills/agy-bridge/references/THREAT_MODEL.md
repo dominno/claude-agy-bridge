@@ -247,7 +247,7 @@ not by the prompt or the clean environment. See [GRADING.md](GRADING.md) for run
 ## Implementation jobs
 
 Implementation is explicitly submitted with its own input manifest. The AGY process sees the writable candidate
-copy and a dedicated profile inside a required Linux Bubblewrap sandbox. It receives a fixed session policy and
+copy and a dedicated profile inside a required OS sandbox: Bubblewrap on Linux, `sandbox-exec` on macOS. It receives a fixed session policy and
 model network access. The approved test argv runs on a separate candidate copy with an isolated network. The job
 store keeps task text, selected source, test results, patches and conversation IDs private to the local user.
 Application checks the reviewed diff hash and affected file preimages, and requires the explicit apply command.
@@ -259,8 +259,44 @@ See [implementation setup and usage](IMPLEMENT.md).
 | I2 | Added or modified lines may not gain C0/C1 controls, a bare carriage return, bidi overrides/isolates or invisible Unicode (`core.text.is_invisible`) unless the identical line is in the original file; the refusal names file, line and code point, never the character. `jobs patch` shows them as escapes or `\u{XXXX}` markers unless `--raw` | `core/text.py`, `adapters/edit_apply.py`, `app/report.py` | `test_edit_apply.py`, `test_implement_workspace.py`, `test_output_hygiene.py` |
 | I3 | A `verified` job records `check_inputs_changed` (changed `--check` argv paths, test and build configuration, `*.pth`, `.github/workflows/`) and `jobs show`/`jobs list` warn; the phase stays `verified` | `app/implement_work.py`, `app/jobs.py` | `test_implement_lifecycle.py` |
 | I4 | `implement`, `doctor --implementation` and the Linux grading sandbox refuse Bubblewrap older than 0.8.0 (`--disable-userns` is required); an unparseable version proceeds to the probe | `adapters/host_tools.py`, `adapters/sandbox.py`, `adapters/edit_sandbox.py` | `test_implement_sandbox.py`, `test_v3_review_regressions.py` |
+| I5 | The backend is chosen by platform: Bubblewrap on Linux, `/usr/bin/sandbox-exec` on macOS; any other system, or a Mac without `sandbox-exec`, is refused with no unconfined fallback, for the agent, the offline check and `doctor --implementation` | `adapters/edit_sandbox.py` (`_macos`), `adapters/edit_macos.py` | `test_implement_macos.py` |
+| I6 | macOS agent policy is default-deny: reads only of OS libraries (`/System`, `/usr/lib`, `/usr/share`, `/private/etc`, time zone data), the resolved AGY binary, the job tree and the dedicated profile; metadata only of their ancestor folders; writes only to the tree, the profile (`TMPDIR` is `<profile>/tmp`, 0700) and `/dev/null`; `process-exec` only of the AGY binary, no `process-fork`; `mach-lookup` only of `com.apple.system.logger` and `com.apple.trustd.agent` (TLS verification), so no securityd/Keychain; network allowed. Denials of `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.gemini`, `~/.config`, `~/.claude`, `~/.codex`, `~/.docker`, `~/.kube`, `~/.netrc`, `~/.git-credentials`, `~/Library/Keychains`, `~/Library/Cookies` and Google/Antigravity application support follow every allowance | `adapters/edit_macos.py` | `test_implement_macos.py` (policy text; real negative probes on darwin) |
+| I7 | AGY's own file tools are also denied the profile, those home folders, `/etc` and `/dev` by real path on macOS (the guest paths `/home/agy/`, `/proc/`, `/dev/`, `/etc/`, `/sys/`, `/tmp/` on Linux, unchanged) | `adapters/edit_macos.agent_private_paths`, `adapters/agy._session_settings` | `test_implement_macos.py` |
+| I8 | The profile check accepts `.gemini/config` only when it holds exactly what AGY writes on first run (empty `mcp_config.json`, `config.json` with no plugins or only the built-in `swarm` switch, an empty `.migrated`, the default CLI project); any other entry or value refuses the profile | `adapters/edit_sandbox._check_default_config` | `test_implement_macos.py` |
+
+### macOS sandbox-exec backend
+
+On macOS, `implement` wraps AGY as `/usr/bin/env HOME=<profile> PATH=... TMPDIR=<profile>/tmp/ /usr/bin/sandbox-exec
+-p <policy> <resolved agy> ...`; `env` sets only fixed, non-secret values before the policy applies, and an API key
+reaches AGY only through the process environment. The policy (I6) was generated and checked on macOS 13 with AGY
+1.5.17: inside it, reading `~/.ssh`, `~/.gemini`, `~/.zshrc`, `~/Library/Keychains/login.keychain-db` and the
+source repository, listing the home folder, writing to the home folder or `/tmp`, and starting `/bin/ls` all fail
+with `Operation not permitted`, while reading `/etc/hosts`, writing the tree and the profile, `agy --version`,
+`agy models` and a real editing turn work. AGY first tries `/usr/bin/security` for its credentials; that exec is
+denied and AGY falls back to the file-based token in the profile (`.gemini/antigravity-cli/antigravity-oauth-token`),
+so the Keychain is never reachable: the user's normal AGY login (Keychain services `gemini` and
+`Antigravity Safe Storage`) is neither read nor overwritten. The offline check reuses the grading Seatbelt profile
+(no network, no fork, only the resolved check executable may run, reads limited to the runtime, OS libraries and the
+check tree, writes to the check tree and a private scratch HOME/TMPDIR) plus the same home-folder denials.
+
+Differences from Bubblewrap, all weaker or different in kind:
+
+- There is no mount namespace: AGY sees real host paths (the profile, the job tree, `/System`, `/private/etc`)
+  rather than `/home/agy` and `/workspace`, and the metadata (not contents) of their ancestor folders. Paths that
+  are not allowed are hidden by policy rather than absent.
+- There is no PID or IPC namespace and no `--die-with-parent`: the bridge kills AGY's process group on stop, but a
+  process could only escape the group with `setsid`, and `process-fork` is denied, so AGY cannot create one.
+- Mach services are filtered by name; `com.apple.trustd.agent` (certificate trust) remains reachable.
+- No status channel confirms that the offline check started; a `sandbox-exec:` diagnostic with a nonzero exit is
+  treated as an infrastructure failure, and a check that prints that prefix itself is reported as one too.
+- Checks cannot start subprocesses (no fork); Linux checks can.
+- Seatbelt (`sandbox-exec`) is deprecated by Apple but still ships; a future macOS could remove it, and the bridge
+  then refuses `implement` rather than run unconfined.
 
 ### Network exposure of the AGY agent
+
+On macOS the policy's `(allow network*)` gives AGY the same host network reach as the Linux sandbox described below
+(loopback services, the LAN, metadata endpoints, and Unix-domain sockets the file policy does not cover).
 
 The AGY agent sandbox is started with bwrap `--share-net`: it shares the host network namespace so AGY can reach
 its provider. The agent process can therefore reach host loopback services (databases, dev servers, admin ports
