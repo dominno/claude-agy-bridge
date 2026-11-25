@@ -1,7 +1,7 @@
 """Start and stop detached agy-bridge workers (the worker launcher adapter).
 
 A worker runs the agy_bridge package this process runs (its scripts/ folder), never one found on sys.path, with an
-isolated interpreter (-I) in a new session.
+isolated interpreter (-I) that writes no bytecode (-B) in a new session.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ _BOOTSTRAP = ("import runpy,sys; sys.path.insert(0,sys.argv.pop(1)); "
 def start_worker(arguments, *, output=None, **options):
     """Start `agy-bridge <arguments>` detached; stdin and (unless output is given) stdout/stderr are /dev/null."""
     package_root = Path(__file__).resolve().parents[2]
-    argv = [sys.executable, '-I', '-c', _BOOTSTRAP, str(package_root), *arguments]
+    argv = [sys.executable, '-I', '-B', '-c', _BOOTSTRAP, str(package_root), *arguments]
     stream = process.DEVNULL if output is None else output
     return process.spawn(argv, stdin=process.DEVNULL, stdout=stream, stderr=stream, start_new_session=True,
                          **options)

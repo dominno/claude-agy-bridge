@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- The launcher and detached workers no longer write `__pycache__` into the installed skill directory.
+
 ### Security
 
 - `apply-diff` counts each hunk's declared lines and refuses, beyond those counts, any line that `patch` (which

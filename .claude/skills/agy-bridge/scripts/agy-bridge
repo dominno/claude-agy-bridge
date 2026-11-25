@@ -3,6 +3,7 @@
 import os
 import sys
 
+sys.dont_write_bytecode = True  # never leave __pycache__ inside an installed skill
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
 from agy_bridge.cli import main  # noqa: E402
