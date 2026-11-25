@@ -4,7 +4,9 @@ import os
 
 import pytest
 
-from agy_bridge import config, queue, stage
+from agy_bridge.app import queue
+from agy_bridge.core import queue_job
+from agy_bridge.core import config, stage
 
 
 def _job(name="example"):
@@ -92,7 +94,7 @@ def test_complete_legacy_only_is_valid_without_a_checksum(h, monkeypatch, leave_
     report = h.repo / paths.results / "example.md"
     text = report.read_text(encoding="utf-8").split(queue.RESULT_CHECKSUM, 1)[0]
     if leave_old_format:
-        text = text.replace(queue.RESULT_FORMAT + "\n", "", 1)
+        text = text.replace(queue_job.RESULT_FORMAT + "\n", "", 1)
     report.write_text(text, encoding="utf-8")
     (h.repo / paths.queue / "done/example.job").rename(h.repo / rel)
 
@@ -152,7 +154,7 @@ def test_archive_alias_needs_a_matching_saved_result(h, monkeypatch):
 def _interrupted_queue(h):
     import hashlib
     import json as _json
-    from agy_bridge import queue as q
+    from agy_bridge.app import queue as q
     paths = q.Paths(str(h.repo))
     job = dict(name='example', model='fake', task='review', files=['notes.md'], timeout='5s', context=False)
     rel = paths.add(job)
@@ -161,12 +163,12 @@ def _interrupted_queue(h):
     results = h.repo / '.agy-bridge/results'
     results.mkdir(parents=True, exist_ok=True)
     head = '# example\n\n%s\n\n%s\njob_sha256: %s\nmodel: fake\nround: 1\nexit_code: 0\n' % (
-        q.RESULT_WARNING, q.RESULT_FORMAT, digest)
+        queue_job.RESULT_WARNING, queue_job.RESULT_FORMAT, digest)
     return paths, rel, results, head
 
 
 def test_truncated_result_of_the_same_job_is_set_aside_and_rerun(h, capsys, monkeypatch):
-    from agy_bridge import queue as q
+    from agy_bridge.app import queue as q
     paths, rel, results, head = _interrupted_queue(h)
     monkeypatch.setattr(q, "attempt", lambda *args, **kw: _answer())
     (results / 'example.md').write_text(head + 'retained_exit_')  # writer died before the checksum footer
@@ -180,7 +182,7 @@ def test_truncated_result_of_the_same_job_is_set_aside_and_rerun(h, capsys, monk
 
 
 def test_different_job_reusing_a_name_still_conflicts(h, monkeypatch):
-    from agy_bridge import queue as q
+    from agy_bridge.app import queue as q
     paths, rel, results, head = _interrupted_queue(h)
     monkeypatch.setattr(q, "attempt", lambda *args: pytest.fail("resent a conflicting job"))
     (results / 'example.md').write_text(head.replace('job_sha256: ', 'job_sha256: 0') + 'partial')
@@ -189,7 +191,7 @@ def test_different_job_reusing_a_name_still_conflicts(h, monkeypatch):
 
 
 def test_publish_never_replaces_and_leaves_no_temp(tmp_path):
-    from agy_bridge import safety
+    from agy_bridge.port import safety
     (tmp_path / 'r').mkdir()
     safety.publish(str(tmp_path), 'r/a.md', 'first\n')
     with pytest.raises(FileExistsError):
@@ -201,7 +203,7 @@ def test_publish_never_replaces_and_leaves_no_temp(tmp_path):
 
 def test_sweep_removes_old_and_already_published_temps_only(tmp_path):
     import time as _time
-    from agy_bridge import safety
+    from agy_bridge.port import safety
     folder = tmp_path / 'r'
     folder.mkdir()
     old = folder / '.agy-tmp-old.md-1'

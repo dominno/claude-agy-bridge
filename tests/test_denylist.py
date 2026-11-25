@@ -1,6 +1,6 @@
 import pytest
 
-from agy_bridge.denylist import PATH_RULES, is_denied, matching_rules
+from agy_bridge.core.denylist import PATH_RULES, is_denied, matching_rules
 
 
 @pytest.mark.parametrize("rule", PATH_RULES, ids=lambda r: r.pattern)

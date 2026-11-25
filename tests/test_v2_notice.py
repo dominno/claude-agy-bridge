@@ -3,8 +3,8 @@ import os
 
 import pytest
 
-from agy_bridge import stage
-from agy_bridge.scan import EXAMPLE_FRAGMENTS
+from agy_bridge.core import stage
+from agy_bridge.core.scan import EXAMPLE_FRAGMENTS
 
 
 def event(h):

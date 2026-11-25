@@ -4,7 +4,9 @@ import time
 
 import pytest
 
-from agy_bridge import config, edit_sandbox, runner
+from agy_bridge.adapters import agy, edit_sandbox
+from agy_bridge.core import config
+from agy_bridge.port import process as process_seam
 
 
 class UnreapableProcess:
@@ -39,7 +41,7 @@ def pipe_reader():
 def test_sandbox_cleanup_closes_stream_without_calling_popen_exit(tmp_path, monkeypatch):
     process = UnreapableProcess(stdout=pipe_reader())
     cancelled = iter((False, True))
-    monkeypatch.setattr(edit_sandbox.subprocess, 'Popen', lambda *_args, **_kw: process)
+    monkeypatch.setattr(process_seam.subprocess, 'Popen', lambda *_args, **_kw: process)
     monkeypatch.setattr(edit_sandbox.os, 'killpg', lambda *_args: None)
     with pytest.raises(edit_sandbox.CleanupError, match='cleanup deadline'):
         edit_sandbox._run(['unused'], tmp_path, {}, 5, lambda: next(cancelled))
@@ -50,10 +52,10 @@ def test_sandbox_cleanup_closes_stream_without_calling_popen_exit(tmp_path, monk
 def test_transport_cleanup_reports_unreaped_child(tmp_path, monkeypatch):
     process = UnreapableProcess(stdout=pipe_reader(), stderr=pipe_reader())
     cancelled = iter((False, False, True))
-    monkeypatch.setattr(runner.subprocess, 'Popen', lambda *_args, **_kw: process)
-    monkeypatch.setattr(runner, '_kill_group', lambda *_args: None)
-    with pytest.raises(runner.EditCleanupError, match='cleanup deadline'):
-        runner.run_edit_agy('agy', str(tmp_path), {}, None, 5, None, 'edit',
+    monkeypatch.setattr(process_seam.subprocess, 'Popen', lambda *_args, **_kw: process)
+    monkeypatch.setattr(process_seam, 'kill_group', lambda *_args: None)
+    with pytest.raises(agy.EditCleanupError, match='cleanup deadline'):
+        agy.run_edit_agy('agy', str(tmp_path), {}, None, 5, None, 'edit',
                             wrap=lambda argv: argv, version=(1, 5, 16), should_cancel=lambda: next(cancelled))
     assert process.waits == [0.25, 1]
     assert process.stdout.closed and process.stderr.closed
@@ -81,7 +83,7 @@ def test_expired_job_deadline_prevents_agent_setup(tmp_path, monkeypatch):
     monkeypatch.setattr(edit_sandbox, 'agent_command', unexpected)
     with pytest.raises(edit_sandbox.DeadlineExceeded, match='before the AGY'):
         edit_sandbox.preflight(tree=tmp_path, profile=tmp_path, exe='agy', deadline=deadline)
-    answer = runner.run_edit_agy('agy', str(tmp_path), {}, None, 20, None, 'edit', wrap=unexpected, deadline=deadline)
+    answer = agy.run_edit_agy('agy', str(tmp_path), {}, None, 20, None, 'edit', wrap=unexpected, deadline=deadline)
     assert answer.exit_code == config.EXIT_TIMEOUT and answer.returncode is None
 
 
@@ -94,9 +96,9 @@ def test_edit_requires_wrapper_and_caps_fallback_version_probe(tmp_path, monkeyp
         raise subprocess.TimeoutExpired(argv, timeout)
 
     with pytest.raises(config.UsageError, match='isolation wrapper'):
-        runner.run_edit_agy('agy', str(tmp_path), {}, None, 5, None, 'edit', wrap=None)
-    monkeypatch.setattr(runner, 'run_probe', probe)
-    result = runner.run_edit_agy('agy', str(tmp_path), {}, None, 15, None, 'edit',
+        agy.run_edit_agy('agy', str(tmp_path), {}, None, 5, None, 'edit', wrap=None)
+    monkeypatch.setattr(agy, 'run_probe', probe)
+    result = agy.run_edit_agy('agy', str(tmp_path), {}, None, 15, None, 'edit',
                                  wrap=lambda argv: wrapped.append(argv) or argv, deadline=time.monotonic() + 2)
     assert result.exit_code == config.EXIT_TIMEOUT
     assert wrapped == [['agy', '--version']]

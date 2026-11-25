@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agy-bridge"
 version = "0.3.0"
-description = "Delegate read-only tasks and isolated coding jobs to the Antigravity CLI from Claude Code."
+description = "Delegate read-only tasks and isolated coding jobs to the Antigravity CLI from Claude Code or Codex."
 requires-python = ">=3.9"
 license = { text = "MIT" }
 dependencies = []
@@ -17,6 +17,11 @@ agy-bridge = "agy_bridge.cli:main"
 Homepage = "https://github.com/dominno/claude-agy-bridge"
 Issues = "https://github.com/dominno/claude-agy-bridge/issues"
 
+# The package lives inside the agent skill folder, so the skill ships the same code the console script runs.
+[tool.setuptools]
+package-dir = { "" = ".claude/skills/agy-bridge/scripts" }
+packages = ["agy_bridge", "agy_bridge.core", "agy_bridge.port", "agy_bridge.adapters", "agy_bridge.app", "agy_bridge.cli"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = [".claude/skills/agy-bridge/scripts"]

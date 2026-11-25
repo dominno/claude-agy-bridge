@@ -4,7 +4,10 @@ import sys
 
 import pytest
 
-from agy_bridge import config, grading, stats
+from agy_bridge.adapters import sandbox
+from agy_bridge.app import grading, stats
+from agy_bridge.core import config, grading_rules
+from agy_bridge.port import process
 
 
 @pytest.fixture
@@ -42,17 +45,17 @@ def test_baseline_must_pass(case):
 
 @pytest.mark.parametrize('text',['no fence','```mutants\nnot json\n```','```mutants\n{}\n```','```mutants\n\n```'])
 def test_mutants_parser_strict(text):
-    with pytest.raises(ValueError): grading.extract_mutants(text)
+    with pytest.raises(ValueError): grading_rules.extract_mutants(text)
 
 
 def test_annotated_parser():
     lines=['```mutants',json.dumps(mutant()),'```']
-    assert grading.extract_mutants('\n'.join('UNVERIFIED (malformed citation line): '+s for s in lines))==[mutant()]
+    assert grading_rules.extract_mutants('\n'.join('UNVERIFIED (malformed citation line): '+s for s in lines))==[mutant()]
 
 
 @pytest.mark.parametrize('old,new,trivial',[('x = 1','x  =  1',True),('x = 1','x = 1 # hi',True),('x = 1','x = 2',False),('x = 1','x = (1)',False),('x = 1','x = 0x1',False),('x = 1','x = 1\n"hello"',False)])
 def test_trivial_python(old,new,trivial):
-    assert grading.trivial_change(old,new)==trivial
+    assert grading_rules.trivial_change(old,new)==trivial
 
 
 def test_apply_diff_and_cli_record(case):
@@ -78,7 +81,7 @@ def test_diff_traversal_refused(case,path):
 def test_case_no_shell_and_scratch_outside_repo(case,monkeypatch):
     h,c=case
     c['test_cmd']='echo yes'
-    with pytest.raises(ValueError): grading.validate_case(str(h.repo),c)
+    with pytest.raises(ValueError): grading_rules.validate_case(str(h.repo),c)
     c['test_cmd']=['python','check.py']
     monkeypatch.setenv('AGY_BRIDGE_SCRATCH',str(h.repo/'scratch'))
     with pytest.raises(ValueError): grading.grade(str(h.repo),c,[mutant()])
@@ -108,7 +111,6 @@ def test_case_env_clean_and_placeholders(case,monkeypatch):
 
 
 def test_test_timeout_kills_process_group(case,monkeypatch,tmp_path):
-    from agy_bridge import runner
     h,c=case; calls=[]
     class Process:
         pid=999999
@@ -116,23 +118,23 @@ def test_test_timeout_kills_process_group(case,monkeypatch,tmp_path):
         def wait(self,timeout=None):
             assert timeout is not None
             if timeout == 300:
-                raise runner.subprocess.TimeoutExpired('check',timeout)
+                raise process.subprocess.TimeoutExpired('check',timeout)
             return -9
     def popen(argv,**kw):
         assert kw['start_new_session'] and 'shell' not in kw
         assert kw['cwd']==str(tmp_path)
         return Process()
-    monkeypatch.setattr(runner.subprocess,'Popen',popen)
-    monkeypatch.setattr(runner.os,'killpg',lambda *args:calls.append(args))
-    monkeypatch.setattr(runner,'sandbox_preflight',lambda *args: None)
+    monkeypatch.setattr(process.subprocess,'Popen',popen)
+    monkeypatch.setattr(sandbox.os,'killpg',lambda *args:calls.append(args))
+    monkeypatch.setattr(sandbox,'sandbox_preflight',lambda *args: None)
     rc,detail=grading.run_tests(str(h.repo),c,tmp_path)
     assert rc==124 and detail=='timeout after 300s'
-    assert calls==[(999999,runner.signal.SIGKILL)]
+    assert calls==[(999999,sandbox.signal.SIGKILL)]
 
 
 @pytest.mark.parametrize('path',['.env','sub/.ssh/config','.git/config','link'])
 def test_case_sources_restricted(case,path):
-    from agy_bridge import stage
+    from agy_bridge.core import stage
     h,c=case
     if path=='link': (h.repo/'link').symlink_to(h.repo/'impl.py')
     c['files']['impl.py']=path
@@ -158,7 +160,7 @@ def test_diff_fuzz_offset_and_no_diff(case):
 
 def test_diff_git_fallback_fresh_strategies(case,monkeypatch):
     h,c=case; calls=[]
-    real=grading.runner.run_scratch
+    real=sandbox.run_scratch
     def run(argv,tree,repo,env=None,timeout=300,**kwargs):
         if argv[0] in ('patch','git'):
             assert (grading.Path(tree)/'impl.py').read_text().endswith('unused = 2\n')
@@ -169,22 +171,22 @@ def test_diff_git_fallback_fresh_strategies(case,monkeypatch):
             assert env['GIT_CONFIG_GLOBAL']==os.devnull
             return 0,''
         return real(argv,tree,repo,env,timeout,**kwargs)
-    monkeypatch.setattr(grading.runner,'run_scratch',run)
+    monkeypatch.setattr(sandbox,'run_scratch',run)
     r=grading.apply_diff(str(h.repo),c,'--- impl.py\n+++ impl.py\n@@ -1 +1 @@\n-a\n+b\n')
     assert r['how']=='git apply -p0' and r['tests_pass'] and len(calls)==3
 
 
 def test_diff_fences_and_table_cli(case):
     h,c=case
-    assert grading.extract_diff('```diff\nfirst\n```\n```diff\nsecond\n```')=='first\n'
-    assert grading.extract_diff('```\n--- a\n+++ b\n```')=='--- a\n+++ b\n'
+    assert grading_rules.extract_diff('```diff\nfirst\n```\n```diff\nsecond\n```')=='first\n'
+    assert grading_rules.extract_diff('```\n--- a\n+++ b\n```')=='--- a\n+++ b\n'
     path=h.root/'records.jsonl'; path.write_text(json.dumps(dict(case='x',applied=True,tests_pass=True,how='patch -p0'))+'\n')
     r=h.raw('apply-diff','table',str(path),'--repo',str(h.repo))
     assert r.returncode==0 and '1 pass tests' in r.stdout
 
 
 def test_stats_events_and_headers_kept_separate(h):
-    from agy_bridge import events
+    from agy_bridge.core import events
     fd=events.open_log(str(h.repo))
     try:
         events.append(fd,dict(model='fake',files=[{'path':'notes.md'}],total_bytes=11,seconds=2,dry_run=False))
@@ -206,11 +208,11 @@ def test_diff_hostile_extended_headers(case,metadata):
 
 def test_real_git_fallback_is_outside_source_repository(case,monkeypatch):
     h,c=case
-    real=grading.runner.run_scratch
+    real=sandbox.run_scratch
     def run(argv,tree,repo,env=None,timeout=300,**kwargs):
         if argv[0]=='patch': return 1,'force git strategy'
         return real(argv,tree,repo,env,timeout,**kwargs)
-    monkeypatch.setattr(grading.runner,'run_scratch',run)
+    monkeypatch.setattr(sandbox,'run_scratch',run)
     diff='--- a/impl.py\n+++ b/impl.py\n@@ -1,2 +1,2 @@\n value = 1\n-unused = 2\n+unused = 3\n'
     record=grading.apply_diff(str(h.repo),c,diff)
     assert record['how']=='git apply -p1' and record['tests_pass']

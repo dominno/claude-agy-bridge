@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from agy_bridge import citations, stage
+from agy_bridge.core import citations, stage
 
 
 def citation(path='notes.md', quote='some notes', claim='A model claim'):

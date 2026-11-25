@@ -11,8 +11,10 @@ import time
 
 import pytest
 
+from conftest import SCRIPTS
 
-SOURCE = Path(__file__).resolve().parents[1] / 'src' / 'agy_bridge'
+
+SOURCE = Path(SCRIPTS) / 'agy_bridge'
 CONVERSATIONS = {
     'alpha': '1f6682c8-3ea1-4019-9d32-e7feeb746681',
     'bravo': '1f6682c8-3ea1-4019-9d32-e7feeb746682',
@@ -25,7 +27,7 @@ def detached(tmp_path):
     """Use real CLI launch/handoff, with only the AGY sandbox adapter replaced in a temp copy."""
     tmp_path = tmp_path.resolve()
     bridge = tmp_path / 'bridge'
-    pkg = bridge / 'src' / 'agy_bridge'
+    pkg = bridge / 'scripts' / 'agy_bridge'
     shutil.copytree(SOURCE, pkg, ignore=shutil.ignore_patterns('__pycache__', '_test_mode'))
     (pkg / '_test_mode').touch()
 
@@ -77,7 +79,7 @@ def detached(tmp_path):
         import sys
 
         sys.path.insert(0, {str(pkg.parent)!r})
-        from agy_bridge import edit_sandbox
+        from agy_bridge.adapters import edit_sandbox
         from agy_bridge.cli import main
 
         def preflight(*, exe, **_):
@@ -93,8 +95,8 @@ def detached(tmp_path):
         sys.exit(main())
         ''')
     (pkg / '__main__.py').write_text(entry_text, encoding='utf-8')
-    entry = bridge / 'bin' / 'agy-bridge'
-    entry.parent.mkdir()
+    entry = bridge / 'scripts' / 'agy-bridge'
+    entry.parent.mkdir(exist_ok=True)
     entry.write_text(entry_text, encoding='utf-8')
 
     state_dir = tmp_path / 'state'

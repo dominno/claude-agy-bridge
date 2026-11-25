@@ -1,0 +1,7 @@
+# Codex skill metadata. The skill can send files to Google, so Codex starts it only when the user types $agy-bridge,
+# the counterpart of `disable-model-invocation: true` in SKILL.md for Claude Code.
+interface:
+  display_name: "agy-bridge"
+  short_description: "Delegate bounded tasks to the Antigravity CLI after you confirm the files"
+policy:
+  allow_implicit_invocation: false

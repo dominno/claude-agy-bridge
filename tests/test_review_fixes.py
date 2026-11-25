@@ -7,7 +7,9 @@ import time
 
 import pytest
 
-from agy_bridge import config, report, runner, stage
+from agy_bridge.adapters import agy
+from agy_bridge.app import report
+from agy_bridge.core import config, stage
 
 
 def prepare(repo, files=(), globs=()):
@@ -110,14 +112,14 @@ def test_abnormal_log_is_refused_without_blocking_or_chmod(h, monkeypatch, kind)
 def test_late_stderr_marker_is_detected_across_reads(tmp_path):
     script = tmp_path / 'fake.py'
     script.write_text("import os, time\nos.write(2, b'x' * 70000)\nos.write(2, b'auto-')\ntime.sleep(.1)\nos.write(2, b'denied')\nprint('partial answer')\n")
-    result = runner.run_agy([sys.executable, str(script)], str(tmp_path), config.build_agy_env(), 5, 10000)
+    result = agy.run_agy([sys.executable, str(script)], str(tmp_path), config.build_agy_env(), 5, 10000)
     assert result.err_markers['soft_deny']
     assert result.err_bytes == 70011
     assert report.classify(result, report.clean_answer(result.out)) == config.EXIT_SOFT_DENY
 
 
 def test_capped_result_is_incomplete_even_with_answer():
-    result = runner.RunResult(0, b'partial', 0, dict(quota=False, auth=False, soft_deny=False), False, True, 0)
+    result = agy.RunResult(0, b'partial', 0, dict(quota=False, auth=False, soft_deny=False), False, True, 0)
     assert report.classify(result, 'partial') != config.EXIT_OK
 
 

@@ -6,7 +6,7 @@ import stat
 
 import pytest
 
-from agy_bridge import events
+from agy_bridge.core import events
 
 
 def records(h):
@@ -199,7 +199,8 @@ def test_first_create_transient_enoent_retries_the_same_safe_open(h, monkeypatch
 
 
 def test_append_failure_is_explicit_and_preserves_success_exit(h, monkeypatch, capsys):
-    from agy_bridge import cli, delegation
+    from agy_bridge import cli
+    from agy_bridge.app import delegation
     def fail_append(fd, record):
         raise events.EventError('could not append the event record')
     monkeypatch.setattr(events, 'append', fail_append)
@@ -212,7 +213,7 @@ def test_append_failure_is_explicit_and_preserves_success_exit(h, monkeypatch, c
 
 
 def test_torn_verdict_append_is_recovered(h):
-    from agy_bridge import queue, verdicts
+    from agy_bridge.app import queue, verdicts
     verdicts.record(str(h.repo), 'a', 'pass', 'r', 'checked')
     with open(h.repo / '.agy-bridge/verdicts.jsonl', 'ab') as stream:
         stream.write(b'{"job": "b", "verd')  # a writer died mid-record
@@ -225,7 +226,7 @@ def test_torn_verdict_append_is_recovered(h):
 
 
 def test_oversized_journal_line_still_fails(h):
-    from agy_bridge import verdicts
+    from agy_bridge.app import verdicts
     verdicts.record(str(h.repo), 'a', 'pass', 'r', 'checked')
     with open(h.repo / '.agy-bridge/verdicts.jsonl', 'ab') as stream:
         stream.write(b'x' * (events.MAX_EVENT_LINE_BYTES + 10) + b'\n')

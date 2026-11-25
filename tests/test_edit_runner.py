@@ -4,7 +4,8 @@ import textwrap
 
 import pytest
 
-from agy_bridge import config, runner
+from agy_bridge.adapters import agy
+from agy_bridge.core import config
 
 
 CONVERSATION = "d709b409-e2d3-4af6-b84a-02dd0841678f"
@@ -60,12 +61,12 @@ def provider(tmp_path):
 
 def test_permissions_and_version_gates():
     version = (1, 5, 16)
-    read = runner.build_argv(version, "/bin/agy", "a-model")
+    read = agy.build_argv(version, "/bin/agy", "a-model")
     settings = json.loads(read[read.index("--settings") + 1])
     assert settings["agentMode"] == ""
     assert settings["allowNonWorkspaceAccess"] is False
     assert "write_file(*)" in settings["permissions"]["deny"]
-    write = runner.build_edit_argv(version, "/bin/agy", None, CONVERSATION, "repair", 60, True)
+    write = agy.build_edit_argv(version, "/bin/agy", None, CONVERSATION, "repair", 60, True)
     settings = json.loads(write[write.index("--settings") + 1])
     assert "--mode=accept-edits" in write
     assert write[write.index("--print-timeout") + 1] == "61s"
@@ -75,13 +76,13 @@ def test_permissions_and_version_gates():
         "command(*)", "unsandboxed(*)", "read_url(*)", "execute_url(*)", "mcp(*)",
         "read_file(/home/agy/)", "write_file(/home/agy/)", "read_file(/proc/)", "write_file(/etc/)",
     }
-    assert "--settings" not in runner.build_argv((1, 4, 12), "/bin/agy", None)
-    with pytest.raises(runner.UnsupportedAgy):
-        runner.build_argv((1, 5, 7), "/bin/agy", None)
-    with pytest.raises(runner.UnsupportedAgy):
-        runner.build_edit_argv((1, 5, 15), "/bin/agy", None, None, "repair", 60)
+    assert "--settings" not in agy.build_argv((1, 4, 12), "/bin/agy", None)
+    with pytest.raises(agy.UnsupportedAgy):
+        agy.build_argv((1, 5, 7), "/bin/agy", None)
+    with pytest.raises(agy.UnsupportedAgy):
+        agy.build_edit_argv((1, 5, 15), "/bin/agy", None, None, "repair", 60)
     with pytest.raises(config.UsageError):
-        runner.build_edit_argv(version, "/bin/agy", None, "--untrusted", "repair", 60)
+        agy.build_edit_argv(version, "/bin/agy", None, "--untrusted", "repair", 60)
 
 
 @pytest.mark.parametrize("scenario,code,kind", [
@@ -108,7 +109,7 @@ def test_edit_transport(provider, tmp_path, scenario, code, kind):
     # Timeout and cancel skip the version probe so a slow interpreter start cannot eat the turn budget; the
     # probe's own share of the budget is covered by test_slow_version_probe_times_out_before_launch.
     slow = scenario in ("timeout", "cancel")
-    result = runner.run_edit_agy(
+    result = agy.run_edit_agy(
         provider, str(tmp_path), {}, None, 2 if scenario == "timeout" else 5,
         CONVERSATION if scenario == "nested" else None, scenario, ids.append,
         max_out=512, wrap=wrap, should_cancel=lambda: scenario == "cancel" and bool(ids),
@@ -130,7 +131,7 @@ def test_edit_transport(provider, tmp_path, scenario, code, kind):
 
 def test_preflight_version_skips_second_probe(provider, tmp_path):
     commands = []
-    result = runner.run_edit_agy(
+    result = agy.run_edit_agy(
         provider, str(tmp_path), {}, None, 5, None, "ok",
         version=(1, 5, 16), wrap=lambda args: commands.append(args) or args,
     )
@@ -144,7 +145,7 @@ def test_slow_version_probe_times_out_before_launch(tmp_path):
     path.chmod(0o700)
     wrapped = []
     ids = []
-    result = runner.run_edit_agy(
+    result = agy.run_edit_agy(
         str(path), str(tmp_path), {}, None, .5, None, "ok", ids.append,
         max_out=512, wrap=lambda argv: wrapped.append(argv) or argv,
     )

@@ -32,10 +32,11 @@ def test_r2_env_has_only_allowed_names(h):
 
 
 def test_r2_run_agy_hands_exactly_the_five_names_to_a_plain_program(monkeypatch, tmp_path):
-    from agy_bridge import config, runner
+    from agy_bridge.adapters import agy
+    from agy_bridge.core import config
     for name, value in SECRETS.items():
         monkeypatch.setenv(name, value)
-    res = runner.run_agy(["/usr/bin/env"], str(tmp_path), config.build_agy_env(), 10, 100000)
+    res = agy.run_agy(["/usr/bin/env"], str(tmp_path), config.build_agy_env(), 10, 100000)
     names = {ln.split("=", 1)[0] for ln in res.out.decode().replace("\r", "").splitlines() if "=" in ln}
     assert names == {"HOME", "PATH", "LANG", "TERM", "TMPDIR"}
 
@@ -49,13 +50,13 @@ def test_r2_secrets_exported_in_the_caller_never_reach_agy(h):
 
 
 def test_r2_fails_if_the_allowed_list_is_widened(monkeypatch):
-    from agy_bridge import config
+    from agy_bridge.core import config
     monkeypatch.setenv("SOMETHING_ELSE", "x")
     assert set(config.build_agy_env()) == set(config.ALLOWED_ENV_NAMES)
 
 
 def test_r2_missing_variables_get_safe_defaults(monkeypatch):
-    from agy_bridge import config
+    from agy_bridge.core import config
     for name in config.ALLOWED_ENV_NAMES:
         monkeypatch.delenv(name, raising=False)
     env = config.build_agy_env()
@@ -73,14 +74,14 @@ def test_r3_argv_has_no_permission_widening_flag(h):
 
 
 def test_r3_argv_builder_rejects_a_widening_flag(monkeypatch):
-    from agy_bridge import runner
-    spec = runner.ArgvSpec("--print", "--model", ("--dangerously-skip-permissions",))
-    monkeypatch.setitem(runner.ARGV_SPECS, 1, spec)
-    with pytest.raises(runner.UnsupportedAgy):
-        runner.build_argv((1, 0, 0), "/x/agy", None)
-    monkeypatch.setitem(runner.ARGV_SPECS, 1, runner.ArgvSpec("--print", "--model", ("--yolo",)))
-    with pytest.raises(runner.UnsupportedAgy):
-        runner.build_argv((1, 0, 0), "/x/agy", None)
+    from agy_bridge.adapters import agy
+    spec = agy.ArgvSpec("--print", "--model", ("--dangerously-skip-permissions",))
+    monkeypatch.setitem(agy.ARGV_SPECS, 1, spec)
+    with pytest.raises(agy.UnsupportedAgy):
+        agy.build_argv((1, 0, 0), "/x/agy", None)
+    monkeypatch.setitem(agy.ARGV_SPECS, 1, agy.ArgvSpec("--print", "--model", ("--yolo",)))
+    with pytest.raises(agy.UnsupportedAgy):
+        agy.build_argv((1, 0, 0), "/x/agy", None)
 
 
 def test_r3_model_name_is_passed(h):
@@ -570,7 +571,7 @@ def test_r2_doctor_models_call_gets_only_the_five_names(h):
 
 
 def test_r3_validate_model_rejects_flag_like_and_odd_names():
-    from agy_bridge import config
+    from agy_bridge.core import config
     for bad in ("--dangerously-skip-permissions", "--x", "-m", "a b", "a;b", "", "x" * 80, "$(id)"):
         with pytest.raises(config.UsageError):
             config.validate_model(bad)
@@ -608,7 +609,7 @@ def test_r7_open_log_folder_is_tightened_to_0700(h):
 
 
 def test_r7_home_override_is_ignored_without_the_test_marker(monkeypatch, tmp_path):
-    from agy_bridge import config
+    from agy_bridge.core import config
     monkeypatch.setenv("AGY_BRIDGE_HOME", str(tmp_path / "x"))
     assert config.bridge_home() == str(tmp_path / "x")  # marker exists while the suite runs
     monkeypatch.setattr(config, "TEST_MARKER", str(tmp_path / "no-such-marker"))
@@ -646,7 +647,7 @@ def test_stale_staging_folder_is_swept_at_the_start_of_a_delegation(h):
 
 
 def test_r8_write_new_file_itself_refuses_to_overwrite_or_follow(tmp_path):
-    from agy_bridge import report
+    from agy_bridge.app import report
     existing = tmp_path / "e.txt"
     existing.write_text("keep")
     with pytest.raises(FileExistsError):
@@ -686,16 +687,16 @@ def test_r6_agy_bridge_json_through_a_symlink_is_refused(h):
 
 
 def test_later_stop_signals_are_ignored_after_the_first():
-    code = ("import os, signal\\nfrom agy_bridge import cli\\ncli.install_stop_handlers()\\n"
+    code = ("import os, signal\\nfrom agy_bridge.cli import signals\\nsignals.install_stop_handlers()\\n"
             "try:\\n    os.kill(os.getpid(), signal.SIGINT)\\nexcept KeyboardInterrupt:\\n    pass\\n"
-            "print([signal.getsignal(s) == signal.SIG_IGN for s in cli.STOP_SIGNALS])\\n")
+            "print([signal.getsignal(s) == signal.SIG_IGN for s in signals.STOP_SIGNALS])\\n")
     out = subprocess.run([sys.executable, "-c", code.replace("\\n", "\n")], capture_output=True, text=True,
-                         env=dict(os.environ, PYTHONPATH=os.path.join(os.path.dirname(BIN), "..", "src")))
+                         env=dict(os.environ, PYTHONPATH=os.path.dirname(BIN)))
     assert out.stdout.strip() == "[True, True, True]", out.stderr
 
 
 def test_r7_home_override_needs_the_env_switch_as_well_as_the_marker(monkeypatch, tmp_path):
-    from agy_bridge import config
+    from agy_bridge.core import config
     monkeypatch.setenv("AGY_BRIDGE_HOME", str(tmp_path / "x"))
     assert config.bridge_home() == str(tmp_path / "x")
     monkeypatch.delenv("AGY_BRIDGE_TEST_MODE")

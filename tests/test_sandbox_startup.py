@@ -5,7 +5,9 @@ import time
 
 import pytest
 
-from agy_bridge import grading, queue, runner, sandbox
+from agy_bridge.adapters import sandbox
+from agy_bridge.app import grading, queue
+from agy_bridge.port import process
 
 
 def test_mac_profile_root_read_precedes_secret_denials(tmp_path):
@@ -54,9 +56,9 @@ def test_preflight_success_uses_only_isolated_case_interpreter(tmp_path, monkeyp
         assert kwargs['start_new_session'] and kwargs['stdin'] == subprocess.DEVNULL
         kwargs['stdout'].write(b'1\n')
         return Process()
-    monkeypatch.setattr(runner.subprocess, 'Popen', popen)
-    monkeypatch.setattr(runner.os, 'killpg', lambda *args: None)
-    runner.sandbox_preflight(sys.executable, str(tmp_path), str(tmp_path/'repo'))
+    monkeypatch.setattr(process.subprocess, 'Popen', popen)
+    monkeypatch.setattr(sandbox.os, 'killpg', lambda *args: None)
+    sandbox.sandbox_preflight(sys.executable, str(tmp_path), str(tmp_path/'repo'))
 
 
 @pytest.mark.parametrize('failure', ['timeout', 'abort', 'spawn', 'wrong-output', 'missing'])
@@ -79,15 +81,15 @@ def test_preflight_refuses_without_running_case(tmp_path, monkeypatch, failure):
             raise OSError('cannot spawn')
         kwargs['stdout'].write(b'posix_spawn: Operation not permitted' if failure == 'spawn' else b'bad output')
         return Process()
-    monkeypatch.setattr(runner.subprocess, 'Popen', popen)
-    monkeypatch.setattr(runner.os, 'killpg', lambda *args: kills.append(args))
+    monkeypatch.setattr(process.subprocess, 'Popen', popen)
+    monkeypatch.setattr(sandbox.os, 'killpg', lambda *args: kills.append(args))
     with pytest.raises(sandbox.Unavailable, match='sandbox unavailable on this machine.*unsafe-no-sandbox') as error:
-        runner.sandbox_preflight(sys.executable, str(tmp_path), str(tmp_path/'repo'))
+        sandbox.sandbox_preflight(sys.executable, str(tmp_path), str(tmp_path/'repo'))
     assert len(calls) == 1
     if failure == 'timeout':
         assert waits[0] == 10 and max(waits) <= 10 and len(waits) == 2
         assert 'abandon' in str(error.value)
-        assert kills == [(99999999, runner.signal.SIGKILL)]
+        assert kills == [(99999999, sandbox.signal.SIGKILL)]
 
 
 def test_unkillable_check_is_abandoned_with_bounded_wait(tmp_path, monkeypatch):
@@ -98,10 +100,10 @@ def test_unkillable_check_is_abandoned_with_bounded_wait(tmp_path, monkeypatch):
             assert timeout is not None
             waits.append(timeout)
             raise subprocess.TimeoutExpired('check', timeout)
-    monkeypatch.setattr(runner.subprocess, 'Popen', lambda *a, **k: Process())
-    monkeypatch.setattr(runner.os, 'killpg', lambda *args: None)
+    monkeypatch.setattr(process.subprocess, 'Popen', lambda *a, **k: Process())
+    monkeypatch.setattr(sandbox.os, 'killpg', lambda *args: None)
     with pytest.raises(sandbox.Unavailable, match='abandon'):
-        runner.run_scratch([sys.executable, '-c', 'pass'], str(tmp_path), str(tmp_path/'repo'), timeout=.01)
+        sandbox.run_scratch([sys.executable, '-c', 'pass'], str(tmp_path), str(tmp_path/'repo'), timeout=.01)
     assert len(waits) == 2 and waits[1] <= 2
 
 
@@ -112,8 +114,8 @@ def test_unavailable_preflight_aborts_before_checks_or_patch(h, monkeypatch, ope
                 test_cmd=[sys.executable, '-c', 'pass'])
     def unavailable(*args, **kwargs):
         raise sandbox.Unavailable('sandbox unavailable on this machine; use --unsafe-no-sandbox explicitly')
-    monkeypatch.setattr(runner, 'sandbox_preflight', unavailable)
-    monkeypatch.setattr(runner, 'run_scratch', lambda *a, **k: pytest.fail('code or patch ran before preflight'))
+    monkeypatch.setattr(sandbox, 'sandbox_preflight', unavailable)
+    monkeypatch.setattr(sandbox, 'run_scratch', lambda *a, **k: pytest.fail('code or patch ran before preflight'))
     with pytest.raises(sandbox.Unavailable, match='sandbox unavailable'):
         if operation == 'mutant':
             grading.grade(str(h.repo), case, [dict(file='impl.py', old='1', new='2', why='probe')])
@@ -134,10 +136,10 @@ def test_patch_sandbox_failures_abort_measurement(tmp_path, monkeypatch, kind):
         if kind == 'git-spawn':
             kwargs['stdout'].write(b'posix_spawn: Operation not permitted')
         return Process()
-    monkeypatch.setattr(runner.subprocess, 'Popen', popen)
-    monkeypatch.setattr(runner.os, 'killpg', lambda *args: None)
+    monkeypatch.setattr(process.subprocess, 'Popen', popen)
+    monkeypatch.setattr(sandbox.os, 'killpg', lambda *args: None)
     with pytest.raises(sandbox.Unavailable, match='sandbox unavailable'):
-        runner.run_scratch(['git' if kind == 'git-spawn' else 'patch', '--version'],
+        sandbox.run_scratch(['git' if kind == 'git-spawn' else 'patch', '--version'],
                            str(tmp_path), str(tmp_path/'repo'), timeout=.01, sandbox_step=True)
 
 

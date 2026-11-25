@@ -10,7 +10,9 @@ import time
 
 import pytest
 
-from agy_bridge import config, grading, queue, stage
+from agy_bridge.app import grading, queue, queue_store
+from agy_bridge.core import config, grading_rules, stage
+from conftest import SCRIPTS
 
 
 @pytest.fixture
@@ -110,7 +112,8 @@ def test_one_mib_hostile_parsers_are_linear(kind):
     # A subprocess timeout prevents the old quadratic parser hanging pytest for hours.
     code = r'''
 import sys, time
-from agy_bridge import queue, grading, citations
+from agy_bridge.app import queue
+from agy_bridge.core import citations, grading_rules
 kind = sys.argv[1]
 n = 1024*1024
 start = time.monotonic()
@@ -120,25 +123,25 @@ elif kind == 'need-many':
     with tempfile.TemporaryDirectory() as root:
         queue.need_files(root, 'NEED: missing\n'*(n//14), [])
 elif kind == 'mutants':
-    try: grading.extract_mutants('```mutants\n'*(n//11))
+    try: grading_rules.extract_mutants('```mutants\n'*(n//11))
     except ValueError: pass
-elif kind == 'diff': grading.extract_diff('```x\n'*(n//5))
-elif kind == 'unannotate': grading.unannotate('UNVERIFIED (' + ' '*n)
+elif kind == 'diff': grading_rules.extract_diff('```x\n'*(n//5))
+elif kind == 'unannotate': grading_rules.unannotate('UNVERIFIED (' + ' '*n)
 elif kind == 'diff_headers':
-    try: grading.check_diff('--- x\n+++ x\n@@ -' + '1'*n + 'X')
+    try: grading_rules.check_diff('--- x\n+++ x\n@@ -' + '1'*n + 'X')
     except ValueError: pass
 elif kind.startswith('diff_'):
     lines = {'diff_binary': 'index ' + 'a'*n + ' 120001',
              'diff_index': 'index ' + 'a'*n + '..X',
              'diff_separator': '='*n + 'X',
              'diff_modes': 'new mode 100' + '6'*n}
-    try: grading.check_diff('--- x\n+++ x\n' + lines[kind])
+    try: grading_rules.check_diff('--- x\n+++ x\n' + lines[kind])
     except ValueError: pass
 else: citations.check('FILE: x | QUOTE: "' + '" | CLAIM: '* (n//11), [])
 assert time.monotonic() - start < .8
 '''
     subprocess.run([sys.executable, '-c', code, kind], check=True, timeout=5,
-                   env=dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]/'src')))
+                   env=dict(os.environ, PYTHONPATH=SCRIPTS))
 
 
 def job(name):
@@ -201,12 +204,12 @@ def test_grading_honors_extra_deny(proposal, kind):
     case['test_cmd']=['python','-c','pass']
     (h.repo/'.agy-bridge.json').write_text(json.dumps({'deny':['protected.py']}))
     with pytest.raises((ValueError,stage.Refused)):
-        if kind=='destination': grading.validate_case(str(h.repo),case)
+        if kind=='destination': grading_rules.validate_case(str(h.repo),case)
         else: grading.apply_diff(str(h.repo),case,patch('unused = 3',file='protected.py'))
 
 
 def test_missing_sandbox_refuses_unless_explicit(proposal, monkeypatch):
-    from agy_bridge import sandbox
+    from agy_bridge.adapters import sandbox
     h, case = proposal
     monkeypatch.setattr(sandbox.sys, 'platform', 'unsupported-test-os')
     with pytest.raises(config.UsageError, match='unsafe-no-sandbox'):
@@ -217,13 +220,13 @@ def test_missing_sandbox_refuses_unless_explicit(proposal, monkeypatch):
 
 def test_runner_tolerates_status_probe_lock(h, monkeypatch):
     paths=queue.Paths(str(h.repo)); calls=[]
-    real=queue.fcntl.flock
+    real=queue_store.fcntl.flock
     def flock(fd, flags):
         calls.append(flags)
         if len(calls)==1:
             raise BlockingIOError
         return real(fd,flags)
-    monkeypatch.setattr(queue.fcntl,'flock',flock)
+    monkeypatch.setattr(queue_store.fcntl,'flock',flock)
     with paths.lock('run'):
         assert paths.lock_fd is not None
     assert len(calls)==2
@@ -249,7 +252,7 @@ def test_detached_child_cannot_survive_grading(proposal):
 
 
 def test_mac_profile_has_required_denials(tmp_path):
-    from agy_bridge import sandbox
+    from agy_bridge.adapters import sandbox
     profile=sandbox.mac_profile(str(tmp_path),sys.executable)
     assert '(deny network*)' in profile and '(deny file-write*)' in profile
     assert '(deny file-read*)' in profile and '(deny process-fork)' in profile
@@ -261,14 +264,14 @@ def test_mac_profile_has_required_denials(tmp_path):
 
 @pytest.mark.parametrize('backend', ['bwrap','unshare'])
 def test_linux_backends_confine_files_network_and_detached_children(tmp_path,monkeypatch,backend):
-    from agy_bridge import sandbox
+    from agy_bridge.adapters import host_tools, sandbox
     monkeypatch.setattr(sandbox.sys,'platform','linux')
-    real=sandbox.executable
+    real=host_tools.executable
     def executable(name,path):
         if name in ('bwrap','unshare','mount','chroot','setpriv'):
             return '/usr/bin/'+name if name != 'bwrap' or backend=='bwrap' else None
         return real(name,path)
-    monkeypatch.setattr(sandbox,'executable',executable)
+    monkeypatch.setattr(host_tools,'executable',executable)
     monkeypatch.setattr(sandbox,'linux_bindings',lambda command: ([sys.executable],[]))
     checked=[]
     monkeypatch.setattr(sandbox,'bwrap_version',lambda tool, tree: checked.append(tool) or (0,9,0))
@@ -288,13 +291,13 @@ def test_linux_backends_confine_files_network_and_detached_children(tmp_path,mon
 
 
 def test_grading_sandbox_refuses_an_old_bubblewrap(tmp_path, monkeypatch):
-    from agy_bridge import sandbox
+    from agy_bridge.adapters import host_tools, sandbox
     monkeypatch.setattr(sandbox.sys, 'platform', 'linux')
     tool = tmp_path / 'bwrap'
     tool.write_text('#!/bin/sh\necho "bubblewrap 0.6.1"\n')
     tool.chmod(0o700)
-    real = sandbox.executable
-    monkeypatch.setattr(sandbox, 'executable', lambda name, path: str(tool) if name == 'bwrap' else real(name, path))
+    real = host_tools.executable
+    monkeypatch.setattr(host_tools, 'executable', lambda name, path: str(tool) if name == 'bwrap' else real(name, path))
     monkeypatch.setattr(sandbox, 'linux_bindings', lambda command: pytest.fail('bindings built before the gate'))
     monkeypatch.setattr(sandbox, '_bwrap_versions', {})
     with pytest.raises(sandbox.Unavailable) as info:
@@ -306,10 +309,10 @@ def test_grading_sandbox_refuses_an_old_bubblewrap(tmp_path, monkeypatch):
 
 
 def test_bwrap_version_gate_parses_and_proceeds_on_unknown(monkeypatch):
-    from agy_bridge import sandbox
-    assert sandbox.parse_bwrap_version('bubblewrap 0.11.0\n') == (0, 11, 0)
-    assert sandbox.bwrap_too_old((0, 8, 0), 'grading') is None
-    assert sandbox.bwrap_too_old(None, 'grading') is None
+    from agy_bridge.adapters import host_tools, sandbox
+    assert host_tools.parse_bwrap_version('bubblewrap 0.11.0\n') == (0, 11, 0)
+    assert host_tools.bwrap_too_old((0, 8, 0), 'grading') is None
+    assert host_tools.bwrap_too_old(None, 'grading') is None
     monkeypatch.setattr(sandbox, '_bwrap_versions', {})
     assert sandbox.bwrap_version('/nonexistent/bwrap', '/') is None
 
@@ -319,12 +322,12 @@ def test_bwrap_version_gate_parses_and_proceeds_on_unknown(monkeypatch):
 def test_checked_code_cannot_create_a_nested_user_namespace(tmp_path, monkeypatch, backend):
     """bwrap passes --disable-userns; the unshare fallback relies on chroot, which makes CLONE_NEWUSER fail (EPERM)."""
     import subprocess
-    from agy_bridge import sandbox
-    real = sandbox.executable
+    from agy_bridge.adapters import host_tools, sandbox
+    real = host_tools.executable
     if real(backend, '/usr/bin:/bin:/usr/local/bin') is None:
         pytest.skip('%s absent' % backend)
     if backend == 'unshare':
-        monkeypatch.setattr(sandbox, 'executable', lambda name, path: None if name == 'bwrap' else real(name, path))
+        monkeypatch.setattr(host_tools, 'executable', lambda name, path: None if name == 'bwrap' else real(name, path))
     tree = tmp_path / 'tree'
     tree.mkdir()
     code = ('import ctypes, ctypes.util, os, sys\n'

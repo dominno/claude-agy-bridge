@@ -1,6 +1,6 @@
 import pytest
 
-from agy_bridge.scan import SECRET_RULES, scan_bytes
+from agy_bridge.core.scan import SECRET_RULES, scan_bytes
 
 
 @pytest.mark.parametrize("rule", SECRET_RULES, ids=lambda r: r.id)
@@ -22,7 +22,7 @@ def test_r5_count_is_per_rule_and_never_returns_the_match():
 
 def test_r5_very_long_lines_stay_fast_and_clean():
     import time
-    from agy_bridge import config
+    from agy_bridge.core import config
     # The total-size gate refuses anything larger before the scan, so MAX_TOTAL_BYTES is the real worst case.
     start = time.time()
     assert scan_bytes(b"a" * config.MAX_TOTAL_BYTES) == {}
@@ -172,7 +172,7 @@ def _adversarial_inputs(rule, size=200 * 1024):
 
 def test_r5_every_pattern_finishes_fast_on_adversarial_200kb_inputs():
     import time
-    from agy_bridge.scan import SECRET_RULES, rule_regexes
+    from agy_bridge.core.scan import SECRET_RULES, rule_regexes
     by_id = {r.id: r for r in SECRET_RULES}
     for rule_id, regex in rule_regexes():
         for data in _adversarial_inputs(by_id[rule_id]):
@@ -192,7 +192,7 @@ def test_r5_the_two_reported_quadratic_cases_are_fast():
 
 def test_r5_no_pattern_has_an_unbounded_or_repeated_group():
     import re as _re
-    from agy_bridge.scan import SECRET_RULES
+    from agy_bridge.core.scan import SECRET_RULES
     for rule in SECRET_RULES:
         bare = _re.sub(r"\[(?:\\.|[^\]\\])*\]", "[]", rule.pattern)  # drop character classes
         bare = bare.replace("\\\\", "")
@@ -203,7 +203,7 @@ def test_r5_no_pattern_has_an_unbounded_or_repeated_group():
 
 
 def test_r5_oversize_inputs_are_refused_before_any_scan(tmp_path, monkeypatch):
-    from agy_bridge import stage
+    from agy_bridge.core import stage
     (tmp_path / ".git").mkdir()
     (tmp_path / "big.txt").write_text("x" * 5000)
     (tmp_path / "ok.txt").write_text("y" * 10)

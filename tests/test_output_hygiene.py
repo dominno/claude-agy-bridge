@@ -4,7 +4,8 @@ import re
 
 import pytest
 
-from agy_bridge import config, report
+from agy_bridge.app import report
+from agy_bridge.core import config
 
 UNSAFE = re.compile('[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f‎‏‪-‮⁦-⁩  ]')
 NASTY = 'a‮b\u009b31mc⁦d'
@@ -103,6 +104,6 @@ def test_queue_result_with_tag_characters_is_cleaned(h):
 
 
 def test_check_output_tail_is_cleaned():
-    from agy_bridge import implement
-    tail = implement._tail('FAILED test\U000e0041 x\n')
+    from agy_bridge.app import implement_work
+    tail = implement_work._tail('FAILED test\U000e0041 x\n')
     assert '\U000e0041' not in tail and 'note: 1 invisible Unicode characters removed' in tail

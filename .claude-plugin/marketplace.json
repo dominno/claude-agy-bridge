@@ -7,7 +7,10 @@
     {
       "name": "agy",
       "source": "./",
-      "description": "Delegate read-only tasks and isolated coding jobs to the Antigravity CLI (agy)."
+      "description": "Delegate read-only tasks and isolated coding jobs to the Antigravity CLI (agy).",
+      "skills": [
+        "./.claude/skills/agy-bridge"
+      ]
     }
   ],
   "description": "agy-bridge: bounded delegation and isolated coding jobs with the Antigravity CLI."

@@ -7,7 +7,10 @@ import time
 
 import pytest
 
-from agy_bridge import cli, config, queue, stage, verdicts
+from agy_bridge.app import queue_commands
+from agy_bridge.app import queue, queue_store, verdicts
+from agy_bridge.core import queue_job
+from agy_bridge.core import config, stage
 
 
 def job(**kw):
@@ -280,7 +283,7 @@ def test_long_answer_kept_in_queue_result(h):
 
 
 def test_verdict_status_uses_entire_history(h):
-    from agy_bridge import events
+    from agy_bridge.core import events
     fd=events.open_log(str(h.repo),name='verdicts.jsonl')
     try:
         events.append(fd,dict(job='old',verdict='pass',by='r',evidence='checked'))
@@ -353,7 +356,7 @@ def test_queue_add_dry_run_applies_the_scan(h):
 
 
 def test_interrupted_add_leaves_no_job_and_the_name_stays_free(h, monkeypatch):
-    from agy_bridge import safety
+    from agy_bridge.port import safety
     paths = queue.Paths(str(h.repo))
 
     def interrupted(fd, data):
@@ -373,7 +376,7 @@ def test_interrupted_add_leaves_no_job_and_the_name_stays_free(h, monkeypatch):
 
 
 def test_stale_queue_temp_is_swept_and_never_run(h):
-    from agy_bridge import safety
+    from agy_bridge.port import safety
     q = h.repo / '.agy-bridge/queue'
     q.mkdir(parents=True)
     stale = q / (safety.TEMP_PREFIX + 'ghost.job-0011223344556677')
@@ -390,7 +393,7 @@ def test_stale_queue_temp_is_swept_and_never_run(h):
 
 
 def test_refusal_result_is_complete_or_absent(h, monkeypatch):
-    from agy_bridge import safety
+    from agy_bridge.port import safety
     paths = queue.Paths(str(h.repo))
     q = h.repo / '.agy-bridge/queue'
     q.mkdir(parents=True)
@@ -417,7 +420,7 @@ def test_unknown_field_is_named_with_the_allowed_list(h):
     path.write_text(json.dumps({'id': 'x'}))
     r = h.raw('queue', 'add', str(path), '--repo', str(h.repo))
     assert r.returncode == 1
-    assert 'unknown job field(s): id; allowed: ' + ', '.join(queue.JOB_FIELDS) in r.stderr
+    assert 'unknown job field(s): id; allowed: ' + ', '.join(queue_job.JOB_FIELDS) in r.stderr
     path.write_text('[1]')
     r = h.raw('queue', 'add', str(path), '--repo', str(h.repo))
     assert r.returncode == 1 and 'job is not a JSON object' in r.stderr
@@ -443,12 +446,12 @@ def test_nonexistent_repo_is_echoed(h):
 
 def test_inherited_sighup_ignore_is_kept_by_the_stop_handlers():
     from conftest import BIN
-    code = ("import signal\nfrom agy_bridge import cli\ncli.install_stop_handlers()\n"
+    code = ("import signal\nfrom agy_bridge.cli import signals\nsignals.install_stop_handlers()\n"
             "print(signal.getsignal(signal.SIGHUP) is signal.SIG_IGN, "
             "signal.getsignal(signal.SIGTERM) is signal.SIG_IGN)\n")
     out = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, timeout=30,
                          preexec_fn=lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN),
-                         env=dict(os.environ, PYTHONPATH=os.path.join(os.path.dirname(BIN), '..', 'src')))
+                         env=dict(os.environ, PYTHONPATH=os.path.dirname(BIN)))
     assert out.stdout.split() == ['True', 'False'], out.stderr
 
 
@@ -532,7 +535,7 @@ def test_watch_detach_refuses_a_symlinked_log(h):
     (h.repo / '.agy-bridge/queue').mkdir(parents=True)
     (h.repo / '.agy-bridge/queue/watcher.log').symlink_to(h.root / 'elsewhere.log')
     with pytest.raises(OSError):
-        cli._detach_watcher(paths, 1)
+        queue_commands.detach_watcher(paths, 1)
     assert not (h.root / 'elsewhere.log').exists()
 
 
@@ -540,8 +543,8 @@ def test_watch_detach_stops_the_child_when_it_misses_the_lock_deadline(h, monkey
     """A start reported as failed after the timeout leaves no watcher behind to drain the queue."""
     import re
     paths = queue.Paths(str(h.repo))
-    monkeypatch.setattr(cli, 'DETACH_WAIT_S', 0.0)
-    assert cli._detach_watcher(paths, 1) == 2
+    monkeypatch.setattr(queue_commands, 'DETACH_WAIT_S', 0.0)
+    assert queue_commands.detach_watcher(paths, 1) == 2
     err = capsys.readouterr().err
     assert 'did not take the queue lock' in err and 'was stopped' in err
     pid = int(re.search(r'watcher pid (\d+)', err).group(1))
@@ -576,7 +579,7 @@ def test_hand_placed_malformed_job_reports_invalid_json(h):
 
 
 def test_invalid_reason_is_escaped_and_redacted():
-    from agy_bridge import stage
+    from agy_bridge.core import stage
     assert queue.invalid_reason(config.UsageError('bad\nexit_code: 0')) == 'bad\\nexit_code: 0'
     assert queue.invalid_reason(config.UsageError('value AKIAABCDEFGHIJKLMNOP')) == 'invalid input (detail redacted)'
     refused = stage.Refused([stage.Refusal('R1', 'path is on the denylist', '.env')])
@@ -593,7 +596,7 @@ def test_queue_cancel_archives_the_pending_job_and_a_run_sends_nothing(h):
     assert not (base / 'queue/example.job').exists() and (base / 'queue/failed/example.job').exists()
     text = (base / 'results/example.md').read_text()
     assert text.startswith('# Queue refusal') and 'cancelled by reader: task dropped; archived as failed' in text
-    assert text.splitlines()[1] == queue.REFUSAL_FORMAT % 'no' == '<!-- agy-bridge-refusal-v1 sent: no -->'
+    assert text.splitlines()[1] == queue_job.REFUSAL_FORMAT % 'no' == '<!-- agy-bridge-refusal-v1 sent: no -->'
     r = h.raw('queue', 'run', '--repo', str(h.repo))
     assert r.returncode == 0, r.stderr
     assert not h.record_path.exists()
@@ -631,7 +634,7 @@ VERDICT_PASS = ('--verdict', 'pass', '--by', 'reader', '--evidence', 'checked')
 def test_verdict_pass_is_refused_on_a_cancelled_job_despite_its_refusal_result(h):
     assert enqueue(h).returncode == 0
     assert h.raw('queue', 'cancel', 'example', '--repo', str(h.repo)).returncode == 0
-    assert (h.repo / '.agy-bridge/results/example.md').read_text().splitlines()[1] == queue.REFUSAL_FORMAT % 'no'
+    assert (h.repo / '.agy-bridge/results/example.md').read_text().splitlines()[1] == queue_job.REFUSAL_FORMAT % 'no'
     r = h.raw('verdict', '--repo', str(h.repo), '--job', 'example', *VERDICT_PASS)
     assert r.returncode == 1 and 'job "example" failed or was cancelled' in r.stderr, r.stderr
     assert not (h.repo / '.agy-bridge/verdicts.jsonl').exists()
@@ -659,7 +662,7 @@ def test_verdict_pass_is_refused_on_a_refusal_result_left_in_the_queue(h):
     assert enqueue(h).returncode == 0
     base = h.repo / '.agy-bridge'
     (base / 'results').mkdir(parents=True, exist_ok=True)
-    (base / 'results/example.md').write_text(queue.refusal_text('refused: test'))
+    (base / 'results/example.md').write_text(queue_job.refusal_text('refused: test'))
     assert (base / 'queue/example.job').exists()
     r = h.raw('verdict', '--repo', str(h.repo), '--job', 'example', *VERDICT_PASS)
     assert r.returncode == 1 and 'job "example" failed or was cancelled' in r.stderr, r.stderr
@@ -734,7 +737,7 @@ def test_status_warns_about_a_watcher_from_another_version(h, extra, shown):
 def test_status_has_no_warning_for_a_watcher_of_this_version(h):
     from agy_bridge import __version__
     fd = _hold_runner_row(h, dict(pid=424242, mode='watch', job=None, started=None, version=__version__,
-                                  code_root=queue.CODE_ROOT))
+                                  code_root=queue_store.CODE_ROOT))
     try:
         r = h.raw('status', '--repo', str(h.repo))
         assert 'running (pid 424242, watch)' in r.stdout and 'WARN' not in r.stdout
@@ -747,7 +750,7 @@ def test_runner_row_records_version_and_code_root(h):
     paths = queue.Paths(str(h.repo))
     with paths.lock('run'):
         row = json.loads((h.repo / '.agy-bridge/queue/watcher.pid').read_text())
-    assert row['version'] == __version__ and row['code_root'] == queue.CODE_ROOT
+    assert row['version'] == __version__ and row['code_root'] == queue_store.CODE_ROOT
 
 
 def test_watch_sweeps_temp_links_each_iteration_then_runs_the_job(h, monkeypatch):
@@ -782,7 +785,7 @@ def test_watch_sweeps_temp_links_each_iteration_then_runs_the_job(h, monkeypatch
 
 def test_watch_stops_when_its_code_root_is_gone(h, monkeypatch, capsys):
     paths = queue.Paths(str(h.repo))
-    monkeypatch.setattr(queue, 'CODE_ROOT', str(h.root / 'removed-plugin/src'))
+    monkeypatch.setattr(queue_store, 'CODE_ROOT', str(h.root / 'removed-skill/scripts'))
     monkeypatch.setattr(queue.time, 'sleep', lambda _: pytest.fail('watch kept polling'))
     assert queue.run(paths, watch=True, poll=.05) == 0
     assert 'no longer exists' in capsys.readouterr().out

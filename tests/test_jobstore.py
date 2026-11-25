@@ -4,7 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from agy_bridge import config, edit_sandbox, implement, jobstore, runner, workspace
+from agy_bridge.adapters import agy, edit_sandbox, jobstore, workspace
+from agy_bridge.app import implement, implement_work
+from agy_bridge.core import config
 
 
 @pytest.fixture
@@ -113,7 +115,7 @@ def test_resume_resets_last_activity_and_records_new_start(state_home, monkeypat
     job, state = _operational_job(jobstore.store_root(create=True))
     state.update(phase='canceled', started_at=2, last_agy_activity_at=3)
     jobstore.save(job, state)
-    monkeypatch.setattr(implement, '_work', lambda _: 0)
+    monkeypatch.setattr(implement_work, '_work', lambda _: 0)
     assert implement._launch(job, foreground=True) == 0
     status = jobstore.read_status(job.name)
     assert status['started_at'] > 3 and 'last_agy_activity_at' not in status
@@ -125,13 +127,13 @@ def test_worker_reports_job_deadline_without_starting_an_edit(state_home, monkey
     work = SimpleNamespace(tree=job / 'tree')
     monkeypatch.setattr(workspace, 'load', lambda *args: work)
     monkeypatch.setattr(workspace, 'export_diff', lambda _: SimpleNamespace(paths=()))
-    monkeypatch.setattr(implement, '_profile', lambda *args: state['profile'])
-    monkeypatch.setattr(runner, 'find_agy', lambda _: '/trusted/agy')
+    monkeypatch.setattr(implement_work, '_profile', lambda *args: state['profile'])
+    monkeypatch.setattr(agy, 'find_agy', lambda _: '/trusted/agy')
 
     def stop_before_edit(**kwargs):
         assert 'deadline' in kwargs
         raise edit_sandbox.DeadlineExceeded('job deadline reached')
 
     monkeypatch.setattr(edit_sandbox, 'preflight', stop_before_edit)
-    assert implement._work(job) == config.EXIT_TIMEOUT
+    assert implement_work._work(job) == config.EXIT_TIMEOUT
     assert jobstore.read_status(job.name)['phase'] == 'timed_out'

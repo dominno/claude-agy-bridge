@@ -2,7 +2,7 @@ import sys
 
 import pytest
 
-from agy_bridge import config
+from agy_bridge.core import config
 
 
 def test_delegate_treats_provider_timeout_with_partial_answer_as_timeout(h):

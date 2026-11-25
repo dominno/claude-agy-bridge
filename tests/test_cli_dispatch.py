@@ -1,7 +1,8 @@
 import json
 import os
 
-from agy_bridge import config, edit_sandbox, runner
+from agy_bridge.adapters import agy, edit_sandbox
+from agy_bridge.core import config
 from agy_bridge.cli import main
 
 
@@ -31,8 +32,8 @@ def test_implementation_doctor_checks_version_inside_sandbox(h, monkeypatch, cap
     profile = h.root / 'profile'
     profile.mkdir(mode=0o700)
     executable = str(h.bindir / 'agy')
-    monkeypatch.setattr(runner, 'find_agy', lambda _: executable)
-    monkeypatch.setattr('agy_bridge.cli.install_stop_handlers', lambda: None)
+    monkeypatch.setattr(agy, 'find_agy', lambda _: executable)
+    monkeypatch.setattr('agy_bridge.cli.signals.install_stop_handlers', lambda: None)
     calls = []
 
     def preflight(*, tree, profile, exe):

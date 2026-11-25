@@ -6,7 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from agy_bridge import config, edit_sandbox, implement, jobstore, runner, workspace
+from agy_bridge.adapters import agy, edit_sandbox, jobstore, workspace
+from agy_bridge.app import implement, implement_work
+from agy_bridge.cli import parser_implement
+from agy_bridge.core import config
 
 
 @pytest.fixture
@@ -111,10 +114,10 @@ def test_test_infrastructure_failure_stops_before_a_model_turn(reviewed_job, res
     else:
         (work.tree / 'a.txt').write_text('previous value\n', encoding='utf-8')
     jobstore.save(job, state)
-    monkeypatch.setattr(implement, '_profile', lambda *args: state['profile'])
-    monkeypatch.setattr(runner, 'find_agy', lambda _: '/trusted/agy')
+    monkeypatch.setattr(implement_work, '_profile', lambda *args: state['profile'])
+    monkeypatch.setattr(agy, 'find_agy', lambda _: '/trusted/agy')
     monkeypatch.setattr(edit_sandbox, 'preflight', lambda **kwargs: '1.5.16')
-    monkeypatch.setattr(runner, 'run_edit_agy', lambda *args, **kwargs: pytest.fail('a paid AGY turn started'))
+    monkeypatch.setattr(agy, 'run_edit_agy', lambda *args, **kwargs: pytest.fail('a paid AGY turn started'))
 
     def check(argv, *, tree, **kwargs):
         assert argv == ['/unavailable-check']
@@ -123,7 +126,7 @@ def test_test_infrastructure_failure_stops_before_a_model_turn(reviewed_job, res
         raise edit_sandbox.InfrastructureError('untrusted details with private paths')
 
     monkeypatch.setattr(edit_sandbox, 'run_test', check)
-    assert implement._work(job) == config.EXIT_REFUSED
+    assert implement_work._work(job) == config.EXIT_REFUSED
     status = jobstore.status(job)
     assert status['phase'] == 'failed' and status['attempt'] == 0
     assert status['failure_kind'] == 'check_infrastructure'
@@ -138,8 +141,8 @@ def test_workspace_check_can_be_added_after_verified_offline_probe(reviewed_job,
     state.update(phase='queued', attempt=0, run_id='b' * 32, check=['./checks/smoke'], write_dirs=['.'])
     (work.tree / 'a.txt').write_text('previous value\n', encoding='utf-8')
     jobstore.save(job, state)
-    monkeypatch.setattr(implement, '_profile', lambda *args: state['profile'])
-    monkeypatch.setattr(runner, 'find_agy', lambda _: '/trusted/agy')
+    monkeypatch.setattr(implement_work, '_profile', lambda *args: state['profile'])
+    monkeypatch.setattr(agy, 'find_agy', lambda _: '/trusted/agy')
     monkeypatch.setattr(edit_sandbox, 'preflight', lambda **kwargs: '1.5.16')
     steps = []
 
@@ -164,9 +167,9 @@ def test_workspace_check_can_be_added_after_verified_offline_probe(reviewed_job,
         return 0, ''
 
     monkeypatch.setattr(edit_sandbox, 'preflight_test', preflight)
-    monkeypatch.setattr(runner, 'run_edit_agy', model)
+    monkeypatch.setattr(agy, 'run_edit_agy', model)
     monkeypatch.setattr(edit_sandbox, 'run_test', check)
-    assert implement._work(job) == (0 if sandbox_ready else config.EXIT_REFUSED)
+    assert implement_work._work(job) == (0 if sandbox_ready else config.EXIT_REFUSED)
     status = jobstore.status(job)
     assert 'baseline_check_exit' not in status
     if sandbox_ready:
@@ -185,12 +188,12 @@ def test_missing_workspace_check_outside_write_scope_is_refused(reviewed_job, mo
     state.update(phase='queued', attempt=0, run_id='b' * 32, check=['./checks/smoke'], write_dirs=[])
     (work.tree / 'a.txt').write_text('previous value\n', encoding='utf-8')
     jobstore.save(job, state)
-    monkeypatch.setattr(implement, '_profile', lambda *args: state['profile'])
-    monkeypatch.setattr(runner, 'find_agy', lambda _: '/trusted/agy')
+    monkeypatch.setattr(implement_work, '_profile', lambda *args: state['profile'])
+    monkeypatch.setattr(agy, 'find_agy', lambda _: '/trusted/agy')
     monkeypatch.setattr(edit_sandbox, 'preflight', lambda **kwargs: '1.5.16')
-    monkeypatch.setattr(runner, 'run_edit_agy', lambda *args, **kwargs: pytest.fail('a paid AGY turn started'))
+    monkeypatch.setattr(agy, 'run_edit_agy', lambda *args, **kwargs: pytest.fail('a paid AGY turn started'))
 
-    assert implement._work(job) == config.EXIT_REFUSED
+    assert implement_work._work(job) == config.EXIT_REFUSED
     status = jobstore.status(job)
     assert status['phase'] == 'failed' and status['attempt'] == 0
     assert 'candidate edits outside --write-dir' in status['detail'] and 'checks/smoke' in status['detail']
@@ -199,9 +202,9 @@ def test_missing_workspace_check_outside_write_scope_is_refused(reviewed_job, mo
 def test_nested_actions_share_legacy_options_and_handlers():
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest='command', required=True)
-    implement.add_arguments(commands)
+    parser_implement.add_arguments(commands)
     group = commands.add_parser('jobs').add_subparsers(dest='action', required=True)
-    implement.add_job_actions(group)
+    parser_implement.add_job_actions(group)
 
     for command in (['implement'], ['jobs', 'start']):
         start = parser.parse_args([*command, '-C', 'workspace', '-f', 'file', '--', 'task'])
@@ -218,7 +221,7 @@ def test_nested_actions_share_legacy_options_and_handlers():
 def _jobs(capsys, *argv):
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest='command', required=True)
-    implement.add_job_actions(commands)
+    parser_implement.add_job_actions(commands)
     args = parser.parse_args(list(argv))
     code = args.handler(args)
     return code, capsys.readouterr().err
@@ -240,14 +243,14 @@ def test_scope_violation_lists_paths_and_escapes_controls():
     state = dict(write_dirs=['src'], manifest=[dict(path='src/a.py')])
     paths = ['docs/x.md', 'evil\x1b[2J.txt'] + ['extra/%d.txt' % n for n in range(12)]
     with pytest.raises(config.UsageError) as info:
-        implement._validate_scope(state, paths)
+        implement_work._validate_scope(state, paths)
     text = str(info.value)
     assert text.startswith('candidate edits outside --write-dir src: docs/x.md, evil\\u001b[2J.txt, ')
     assert '\x1b' not in text and '(+4 more)' in text and 'extra/7.txt' in text and 'extra/8.txt' not in text
     assert 'rerun with a wider --write-dir or reject the job' in text
-    implement._validate_scope(state, ['src/a.py', 'src/new.py'])
+    implement_work._validate_scope(state, ['src/a.py', 'src/new.py'])
     with pytest.raises(config.UsageError, match='only the staged files'):
-        implement._validate_scope(dict(state, write_dirs=[]), ['src/new.py'])
+        implement_work._validate_scope(dict(state, write_dirs=[]), ['src/new.py'])
 
 
 def test_apply_in_wrong_phase_names_the_phase(reviewed_job, capsys):
@@ -299,7 +302,7 @@ def test_remove_reports_reclaimed_bytes(reviewed_job, capsys):
     job, _, _, _ = reviewed_job
     _set_phase(job, 'applied')
     parser = argparse.ArgumentParser()
-    implement.add_job_actions(parser.add_subparsers(dest='command', required=True))
+    parser_implement.add_job_actions(parser.add_subparsers(dest='command', required=True))
     args = parser.parse_args(['remove', job.name])
     assert args.handler(args) == 0
     row = json.loads(capsys.readouterr().out)
@@ -328,7 +331,7 @@ def _age_job(job, seconds):
 
 def _maintain(capsys, *argv):
     parser = argparse.ArgumentParser()
-    implement.add_job_actions(parser.add_subparsers(dest='command', required=True))
+    parser_implement.add_job_actions(parser.add_subparsers(dest='command', required=True))
     args = parser.parse_args(list(argv))
     assert args.handler(args) == 0
     return json.loads(capsys.readouterr().out)
@@ -460,43 +463,43 @@ def test_verified_job_that_edits_only_other_files_has_no_check_inputs(reviewed_j
     state.update(phase='queued', attempt=0, run_id='b' * 32, check=['python3', '-m', 'pytest', '-q'])
     (work.tree / 'a.txt').write_text('previous value\n', encoding='utf-8')
     jobstore.save(job, state)
-    monkeypatch.setattr(implement, '_profile', lambda *args: state['profile'])
-    monkeypatch.setattr(runner, 'find_agy', lambda _: '/trusted/agy')
+    monkeypatch.setattr(implement_work, '_profile', lambda *args: state['profile'])
+    monkeypatch.setattr(agy, 'find_agy', lambda _: '/trusted/agy')
     monkeypatch.setattr(edit_sandbox, 'preflight', lambda **kwargs: '1.5.16')
 
     def model(*args, **kwargs):
         (work.tree / 'a.txt').write_text('new value\n', encoding='utf-8')
         return SimpleNamespace(exit_code=0, error_kind=None)
 
-    monkeypatch.setattr(runner, 'run_edit_agy', model)
+    monkeypatch.setattr(agy, 'run_edit_agy', model)
     monkeypatch.setattr(edit_sandbox, 'run_test', lambda argv, **kwargs: (0, ''))
-    assert implement._work(job) == 0
+    assert implement_work._work(job) == 0
     status = jobstore.status(job)
     assert status['phase'] == 'verified' and status['check_inputs_changed'] == []
-    assert implement.check_inputs_warning(status) is None
+    assert implement_work.check_inputs_warning(status) is None
 
 
 def test_check_inputs_match_argv_paths_after_normalisation_and_known_names():
     check = ['./scripts/../scripts/run.sh', '--config=./ci/conf.yml', '-q', '/abs/tool', '../outside.py']
     changed = ['scripts/run.sh', 'ci/conf.yml', 'src/app.py', 'sub/conftest.py', 'pyproject.toml',
                'site/x.pth', '.github/workflows/ci.yml', 'abs/tool', 'outside.py', 'Makefile', 'docs/setup.cfg.md']
-    assert implement.check_inputs_changed(check, changed) == sorted([
+    assert implement_work.check_inputs_changed(check, changed) == sorted([
         'scripts/run.sh', 'ci/conf.yml', 'sub/conftest.py', 'pyproject.toml', 'site/x.pth',
         '.github/workflows/ci.yml', 'Makefile'])
-    assert implement.check_inputs_changed(None, ['src/app.py']) == []
+    assert implement_work.check_inputs_changed(None, ['src/app.py']) == []
 
 
 def test_check_inputs_include_files_under_a_directory_argument():
     changed = ['tests/test_foo.py', 'tests/unit/test_bar.py', 'testsuite/x.py', 'src/app.py', 'lib/a.py']
-    assert implement.check_inputs_changed(['pytest', 'tests'], changed) == ['tests/test_foo.py',
+    assert implement_work.check_inputs_changed(['pytest', 'tests'], changed) == ['tests/test_foo.py',
                                                                              'tests/unit/test_bar.py']
-    assert implement.check_inputs_changed(['./run.sh', './tests/'], changed) == ['tests/test_foo.py',
+    assert implement_work.check_inputs_changed(['./run.sh', './tests/'], changed) == ['tests/test_foo.py',
                                                                                   'tests/unit/test_bar.py']
-    assert implement.check_inputs_changed(['pytest', '.'], changed) == []
+    assert implement_work.check_inputs_changed(['pytest', '.'], changed) == []
 
 
 def test_jobs_show_and_list_warn_about_changed_check_inputs(reviewed_job, capsys):
-    from agy_bridge import jobs
+    from agy_bridge.app import jobs
     job, _, _, _ = reviewed_job
     state = jobstore.load(job)
     state.update(check=['./run-tests'], check_inputs_changed=['conftest.py', 'run-tests'])

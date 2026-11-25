@@ -1,0 +1,39 @@
+"""Port: the private store of implementation jobs (records, patches, locks and cancel requests).
+
+The adapter is agy_bridge.adapters.jobstore. Phases and the record model live in agy_bridge.core.job_state.
+"""
+from __future__ import annotations
+
+from typing import Iterator, Protocol
+
+from .binding import Slot
+
+
+class JobStore(Protocol):
+    def store_root(self, create=False): ...
+
+    def job_path(self, job_id): ...
+
+    def write(self, job, name, data) -> None: ...
+
+    def save(self, job, state) -> None: ...
+
+    def load(self, job) -> dict: ...
+
+    def lock(self, job): ...
+
+    def cancel_pending(self, job, run_id) -> bool: ...
+
+    def status(self, job) -> dict: ...
+
+    def iter_status(self) -> Iterator[tuple]: ...
+
+    def request_cancel(self, job) -> None: ...
+
+    def remove(self, job_id, force=False, dry_run=False): ...
+
+    def prune(self, older_than, force=False, dry_run=False, now=None) -> dict: ...
+
+
+use = Slot('job store')
+bind = use.bind

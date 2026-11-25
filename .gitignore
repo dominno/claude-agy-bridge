@@ -5,4 +5,4 @@ __pycache__/
 .pytest_cache/
 .agy-bridge/
 *.egg-info/
-src/agy_bridge/_test_mode
+.claude/skills/agy-bridge/scripts/agy_bridge/_test_mode

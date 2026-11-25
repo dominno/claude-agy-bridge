@@ -5,11 +5,12 @@ import sys
 
 import pytest
 
-from agy_bridge import grading, queue, stats
+from agy_bridge.app import queue, stats
+from agy_bridge.core import grading_rules
 
 
 def _check(text):
-    return grading.check_diff(text, None, ['impl.py'])
+    return grading_rules.check_diff(text, None, ['impl.py'])
 
 
 INDENTED_CONFTEST = ('--- impl.py\n+++ impl.py\n@@ -1 +1 @@\n-value = 1\n+value = 2\n'
@@ -41,8 +42,8 @@ def test_f2_stats_header_scan_is_bounded(tmp_path):
     base = tmp_path / 'results'
     base.mkdir()
     (base / 'x.md').write_text('agy-bridge (' * 600000)
-    code = 'import sys,time;from agy_bridge import stats;t=time.monotonic();stats.read_headers(sys.argv[1],sys.argv[2]);assert time.monotonic()-t<2'
-    src = os.path.dirname(os.path.dirname(stats.__file__))
+    code = 'import sys,time;from agy_bridge.app import stats;t=time.monotonic();stats.read_headers(sys.argv[1],sys.argv[2]);assert time.monotonic()-t<2'
+    src = os.path.dirname(os.path.dirname(os.path.dirname(stats.__file__)))  # scripts/ (stats is agy_bridge/app/stats.py)
     env = dict(os.environ, PYTHONPATH=src)
     subprocess.run([sys.executable, '-c', code, str(tmp_path), str(base)], check=True, timeout=20, env=env)
 

@@ -1,15 +1,16 @@
 """Test-only outer process boundary for real sandbox runs (never uses pipes)."""
 import json
 import os
-from pathlib import Path
 import signal
 import subprocess
 import sys
 import tempfile
 
+from conftest import SCRIPTS
+
 
 def bounded_python(code, args=(), timeout=25):
-    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]/'src'))
+    env = dict(os.environ, PYTHONPATH=SCRIPTS)
     with tempfile.TemporaryFile() as output:
         proc = subprocess.Popen([sys.executable, '-c', code, *args], env=env,
                                 stdout=output, stderr=output, start_new_session=True)
@@ -35,10 +36,10 @@ def scratch_call(argv, tree, repo, extra_env=None, **kwargs):
     payload = json.dumps([argv, tree, repo, extra_env, kwargs])
     code = '''
 import json, sys
-from agy_bridge import runner, sandbox
+from agy_bridge.adapters import sandbox
 argv, tree, repo, env, kw = json.loads(sys.argv[1])
 try:
-    result = runner.run_scratch(argv, tree, repo, env, **kw)
+    result = sandbox.run_scratch(argv, tree, repo, env, **kw)
     print(json.dumps(dict(result=result, markers=kw.get('output_markers'))))
 except sandbox.Unavailable as exc:
     print(json.dumps(dict(unavailable=str(exc))))

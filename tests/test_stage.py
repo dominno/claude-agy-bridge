@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from agy_bridge import stage
-from agy_bridge.config import UsageError
+from agy_bridge.core import rootcheck, stage, staging
+from agy_bridge.core.config import UsageError
 
 
 @pytest.fixture
@@ -365,7 +365,7 @@ def _stale(path, mode=0o700, age=4 * 3600):
 
 
 def test_old_staging_folders_are_swept_and_fresh_ones_are_kept(tmp_path, monkeypatch):
-    monkeypatch.setattr(stage.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(staging.tempfile, "gettempdir", lambda: str(tmp_path))
     old, fresh, other = tmp_path / "agy-bridge-ab12cd34", tmp_path / "agy-bridge-ef56gh78", tmp_path / "unrelated"
     ver = tmp_path / "agy-bridge-ver-ab12cd34"
     _stale(old)
@@ -377,7 +377,7 @@ def test_old_staging_folders_are_swept_and_fresh_ones_are_kept(tmp_path, monkeyp
 
 
 def test_sweep_keeps_folders_of_other_tools_with_a_similar_name_or_other_mode(tmp_path, monkeypatch):
-    monkeypatch.setattr(stage.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(staging.tempfile, "gettempdir", lambda: str(tmp_path))
     look_alike = tmp_path / "agy-bridge-cache-of-other-tool"
     open_mode = tmp_path / "agy-bridge-ab12cd34"
     _stale(look_alike)
@@ -387,7 +387,7 @@ def test_sweep_keeps_folders_of_other_tools_with_a_similar_name_or_other_mode(tm
 
 
 def test_sweep_requires_ownership(tmp_path, monkeypatch):
-    monkeypatch.setattr(stage.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(staging.tempfile, "gettempdir", lambda: str(tmp_path))
     mine = tmp_path / "agy-bridge-ab12cd34"
     _stale(mine)
     monkeypatch.setattr(stage.os, "getuid", lambda: os.stat(mine).st_uid + 1)
@@ -395,7 +395,7 @@ def test_sweep_requires_ownership(tmp_path, monkeypatch):
 
 
 def test_sweep_never_follows_a_symlink(tmp_path, monkeypatch):
-    monkeypatch.setattr(stage.tempfile, "gettempdir", lambda: str(tmp_path / "tmp"))
+    monkeypatch.setattr(staging.tempfile, "gettempdir", lambda: str(tmp_path / "tmp"))
     (tmp_path / "tmp").mkdir()
     target = tmp_path / "target"
     (target / "x").mkdir(parents=True)
@@ -417,7 +417,7 @@ def test_cleanup_does_not_chmod_what_a_symlink_points_at(tmp_path):
     (d / "ro").mkdir(parents=True)
     os.symlink(victim, d / "ro" / "lnk")
     os.chmod(d / "ro", 0o500)  # removing lnk fails until the handler fixes the folder
-    stage._cleanup(str(d))
+    staging._cleanup(str(d))
     assert not d.exists()
     assert stat.S_IMODE(os.stat(victim).st_mode) == 0o400 and victim.exists()
 
@@ -431,10 +431,10 @@ def test_cleanup_blocks_signals_while_removing(tmp_path, monkeypatch):
         seen.append((how, set(mask)))
         return real(how, mask)
 
-    monkeypatch.setattr(stage.signal, "pthread_sigmask", spy)
+    monkeypatch.setattr(staging.signal, "pthread_sigmask", spy)
     d = tmp_path / "x"
     d.mkdir()
-    stage._cleanup(str(d))
+    staging._cleanup(str(d))
     assert seen[0][0] == signal.SIG_BLOCK and signal.SIGINT in seen[0][1]
     assert not d.exists()
 
@@ -468,7 +468,7 @@ def test_r6_system_folder_is_refused_even_in_other_letter_case_and_with_the_flag
 def test_r6_canonical_path_uses_the_on_disk_case(fake_home):
     if not _case_insensitive(fake_home):
         pytest.skip("needs a case-insensitive filesystem")
-    assert stage.canonical_path(str(fake_home).upper()) == stage.canonical_path(str(fake_home))
+    assert rootcheck.canonical_path(str(fake_home).upper()) == rootcheck.canonical_path(str(fake_home))
 
 
 def test_r1_symlink_alias_of_home_or_a_secret_folder_is_refused(fake_home, tmp_path):
@@ -528,7 +528,7 @@ def check_refusal(path):
 
 
 def test_r6_home_is_compared_by_inode_even_when_the_path_text_differs(fake_home, monkeypatch):
-    monkeypatch.setattr(stage, "canonical_path", lambda p: str(p))  # no normalising at all
+    monkeypatch.setattr(rootcheck, "canonical_path", lambda p: str(p))  # no normalising at all
     (fake_home / "projects").mkdir()
     for spelling in (str(fake_home / "projects" / ".."), str(fake_home) + "//", str(fake_home.parent / "." / "home")):
         assert check_refusal(spelling).rule == "R6", spelling
@@ -568,7 +568,7 @@ def test_r6_parent_folder_swapped_for_a_symlink_after_the_check_is_not_followed(
 # ---------- round 3: sweep age, vanished folder, system folders, password-database home ----------
 
 def test_sweep_age_is_longer_than_any_allowed_run_plus_a_margin():
-    from agy_bridge import config
+    from agy_bridge.core import config
     assert config.SWEEP_MIN_AGE_S >= config.MAX_TIMEOUT_S + 3600
     assert config.parse_duration("1h") == config.MAX_TIMEOUT_S
     with pytest.raises(UsageError):
@@ -576,8 +576,8 @@ def test_sweep_age_is_longer_than_any_allowed_run_plus_a_margin():
 
 
 def test_sweep_keeps_a_folder_as_old_as_the_longest_possible_run(tmp_path, monkeypatch):
-    from agy_bridge import config
-    monkeypatch.setattr(stage.tempfile, "gettempdir", lambda: str(tmp_path))
+    from agy_bridge.core import config
+    monkeypatch.setattr(staging.tempfile, "gettempdir", lambda: str(tmp_path))
     live = tmp_path / "agy-bridge-ab12cd34"
     stale = tmp_path / "agy-bridge-ef56gh78"
     _stale(live, age=config.MAX_TIMEOUT_S + 60)
@@ -587,7 +587,7 @@ def test_sweep_keeps_a_folder_as_old_as_the_longest_possible_run(tmp_path, monke
 
 
 def test_sweep_name_must_have_exactly_the_mkdtemp_length(tmp_path, monkeypatch):
-    monkeypatch.setattr(stage.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(staging.tempfile, "gettempdir", lambda: str(tmp_path))
     longer = tmp_path / "agy-bridge-ab12cd345"
     shorter = tmp_path / "agy-bridge-ab12cd3"
     _stale(longer)
@@ -599,16 +599,16 @@ def test_cleanup_of_a_folder_that_vanished_does_not_chmod_its_parent(tmp_path):
     parent = tmp_path / "tmpdir"
     parent.mkdir()
     os.chmod(parent, 0o755)
-    stage._cleanup(str(parent / "agy-bridge-gone"))
+    staging._cleanup(str(parent / "agy-bridge-gone"))
     assert stat.S_IMODE(os.stat(parent).st_mode) == 0o755
 
 
 def test_same_matches_different_spellings_of_one_folder(tmp_path):
     (tmp_path / "a").mkdir()
-    assert stage._same(str(tmp_path / "a" / ".." / "a"), str(tmp_path / "a"))
+    assert rootcheck._same(str(tmp_path / "a" / ".." / "a"), str(tmp_path / "a"))
     if _case_insensitive(tmp_path):  # a string comparison of resolved paths would say "different"
-        assert stage._same(str(tmp_path / "a"), str(tmp_path / "A"))
-    assert not stage._same(str(tmp_path / "a"), str(tmp_path / "missing"))
+        assert rootcheck._same(str(tmp_path / "a"), str(tmp_path / "A"))
+    assert not rootcheck._same(str(tmp_path / "a"), str(tmp_path / "missing"))
 
 
 @pytest.mark.parametrize("folder", [
@@ -661,7 +661,7 @@ def test_write_new_refuses_an_existing_symlink_with_o_excl_alone(tmp_path):
     base.mkdir()
     os.symlink(victim, base / "f.txt")
     with pytest.raises(FileExistsError):
-        stage._write_new(str(base), "f.txt", b"new")
+        staging._write_new(str(base), "f.txt", b"new")
     assert victim.read_text() == "keep"
 
 
@@ -734,11 +734,11 @@ def root_home(tmp_path, monkeypatch):
     home = tmp_path / "root"
     (home / "proj" / ".git").mkdir(parents=True)
     (home / ".ssh" / "x" / ".git").mkdir(parents=True)
-    canon = stage.canonical_path(str(home))
-    monkeypatch.setattr(stage, "SYSTEM_TREES", stage.SYSTEM_TREES + (canon,))
-    monkeypatch.setattr(stage, "SYSTEM_ALLOWED_BELOW", ())
-    monkeypatch.setattr(stage, "real_homes", lambda: [canon])
-    monkeypatch.setattr(stage, "database_home", lambda: [canon])
+    canon = rootcheck.canonical_path(str(home))
+    monkeypatch.setattr(rootcheck, "SYSTEM_TREES", rootcheck.SYSTEM_TREES + (canon,))
+    monkeypatch.setattr(rootcheck, "SYSTEM_ALLOWED_BELOW", ())
+    monkeypatch.setattr(rootcheck, "real_homes", lambda: [canon])
+    monkeypatch.setattr(rootcheck, "database_home", lambda: [canon])
     monkeypatch.setenv("HOME", canon)
     return home
 
@@ -770,7 +770,7 @@ def test_r6_other_folders_in_the_system_tree_stay_refused(root_home, tmp_path):
 def test_r6_a_home_at_a_system_root_does_not_lift_the_refusal(monkeypatch):
     if not os.path.isdir("/usr/share"):
         pytest.skip("not on this machine")
-    monkeypatch.setattr(stage, "real_homes", lambda: ["/usr"])
+    monkeypatch.setattr(rootcheck, "real_homes", lambda: ["/usr"])
     with pytest.raises(stage.Refused) as info:
         stage.check_root("/usr/share", allow_non_git=True)
     assert info.value.refusals[0].rule == "R6"
@@ -781,8 +781,8 @@ def test_r6_env_only_home_inside_a_system_tree_never_lifts_the_refusal(monkeypat
     if not os.path.isdir("/usr/share/man"):
         pytest.skip("not on this machine")
     monkeypatch.setenv("HOME", "/usr/share")
-    assert "/usr/share" in stage.real_homes() or stage.canonical_path("/usr/share") in stage.real_homes()
-    assert not any(os.path.samefile(h, "/usr/share") for h in stage.database_home())
+    assert "/usr/share" in rootcheck.real_homes() or rootcheck.canonical_path("/usr/share") in rootcheck.real_homes()
+    assert not any(os.path.samefile(h, "/usr/share") for h in rootcheck.database_home())
     with pytest.raises(stage.Refused) as info:
         stage.check_root("/usr/share/man", allow_non_git=True)
     assert info.value.refusals[0].rule == "R6" and "inside system folder /usr" in info.value.refusals[0].reason
@@ -792,12 +792,12 @@ def test_r6_env_home_cannot_lift_even_when_real_homes_lists_it(tmp_path, monkeyp
     """An env-only home inside a stand-in system tree: real_homes() has it, database_home() does not."""
     tree = tmp_path / "sys"
     (tree / "fakehome" / "proj" / ".git").mkdir(parents=True)
-    canon_tree = stage.canonical_path(str(tree))
-    fake = stage.canonical_path(str(tree / "fakehome"))
-    monkeypatch.setattr(stage, "SYSTEM_TREES", stage.SYSTEM_TREES + (canon_tree,))
-    monkeypatch.setattr(stage, "SYSTEM_ALLOWED_BELOW", ())
-    monkeypatch.setattr(stage, "real_homes", lambda: [fake])
-    monkeypatch.setattr(stage, "database_home", lambda: [])
+    canon_tree = rootcheck.canonical_path(str(tree))
+    fake = rootcheck.canonical_path(str(tree / "fakehome"))
+    monkeypatch.setattr(rootcheck, "SYSTEM_TREES", rootcheck.SYSTEM_TREES + (canon_tree,))
+    monkeypatch.setattr(rootcheck, "SYSTEM_ALLOWED_BELOW", ())
+    monkeypatch.setattr(rootcheck, "real_homes", lambda: [fake])
+    monkeypatch.setattr(rootcheck, "database_home", lambda: [])
     with pytest.raises(stage.Refused) as info:
         stage.check_root(str(tree / "fakehome" / "proj"))
     assert info.value.refusals[0].rule == "R6" and "inside system folder" in info.value.refusals[0].reason

@@ -1,7 +1,7 @@
 {
   "name": "agy",
   "version": "0.3.0",
-  "description": "Read-only AGY delegation, isolated coding jobs, and explicit local result checks.",
+  "description": "The agy-bridge skill: read-only AGY delegation, isolated coding jobs, and explicit local result checks.",
   "author": {
     "name": "Dominik Szopa"
   },
@@ -12,6 +12,10 @@
     "antigravity",
     "agy",
     "delegation",
-    "coding"
+    "coding",
+    "skill"
+  ],
+  "skills": [
+    "./.claude/skills/agy-bridge"
   ]
 }

@@ -2,7 +2,10 @@ import argparse
 import fcntl
 import json
 
-from agy_bridge import config, jobs, jobstore, queue
+from agy_bridge.adapters import jobstore
+from agy_bridge.app import jobs, queue, queue_store
+from agy_bridge.cli import parser_jobs
+from agy_bridge.core import config
 
 
 def _run(*arguments):
@@ -11,7 +14,7 @@ def _run(*arguments):
 
 def _run_command(*arguments):
     parser = argparse.ArgumentParser()
-    jobs.add_arguments(parser.add_subparsers(required=True))
+    parser_jobs.add_arguments(parser.add_subparsers(required=True))
     args = parser.parse_args(arguments)
     return args.handler(args)
 
@@ -179,7 +182,7 @@ def test_out_of_range_watcher_timestamp_is_unavailable(tmp_path):
     with paths.lock('run'):
         watcher = repository / paths.queue / 'watcher.pid'
         watcher.write_text(json.dumps({'pid': 42, 'mode': 'run', 'job': 'review', 'started': 10**1000,
-                                       'version': queue.__version__, 'code_root': queue.CODE_ROOT}))
+                                       'version': queue_store.__version__, 'code_root': queue_store.CODE_ROOT}))
 
         view, warnings = queue.list_jobs(queue.QueueLocation(str(repository)))
         assert [(row['phase'], row['started_at']) for row in view] == [('running', None)]

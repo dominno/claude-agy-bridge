@@ -5,7 +5,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from agy_bridge import config, edit_sandbox, implement, runner
+from agy_bridge.adapters import agy, edit_sandbox
+from agy_bridge.app import implement
+from agy_bridge.core import job_state
+from agy_bridge.core import config
 from agy_bridge.cli import main
 
 
@@ -15,8 +18,8 @@ CONVERSATION = '1f6682c8-3ea1-4019-9d32-e7feeb746681'
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     # Call CLI without installing its signal handlers in the pytest process.
-    from agy_bridge import cli
-    monkeypatch.setattr(cli, 'install_stop_handlers', lambda: None)
+    from agy_bridge.cli import signals
+    monkeypatch.setattr(signals, 'install_stop_handlers', lambda: None)
     repo = tmp_path / 'project'
     (repo / '.git').mkdir(parents=True)
     (repo / 'src').mkdir()
@@ -51,7 +54,7 @@ else:
 print(json.dumps({{'event':'result', 'result':{{'conversation_id':{CONVERSATION!r}, 'status':'SUCCESS'}}}}), flush=True)
 ''')
     fake.chmod(0o700)
-    monkeypatch.setattr(runner, 'find_agy', lambda *_: str(fake))
+    monkeypatch.setattr(agy, 'find_agy', lambda *_: str(fake))
     monkeypatch.setattr(edit_sandbox, 'preflight', lambda **kw: '1.5.16')
     monkeypatch.setattr(edit_sandbox, 'agent_command', lambda argv, **kw: argv)
     return repo, src, profile, jobs
@@ -157,7 +160,7 @@ def test_detached_worker_handoff_handles_failure(project, capsys, monkeypatch):
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         status = implement._status(job)
-        if status['phase'] not in implement.ACTIVE:
+        if status['phase'] not in job_state.ACTIVE:
             break
         time.sleep(0.02)
     assert status['phase'] == 'failed'
@@ -182,8 +185,8 @@ class _FakeTerminal:
 
 @pytest.mark.parametrize('tty, raw', [(True, False), (True, True), (False, False)])
 def test_patch_is_escaped_only_for_a_terminal(monkeypatch, tty, raw):
-    from agy_bridge import implement as module
-    from agy_bridge import jobstore as store
+    from agy_bridge.app import implement as module
+    from agy_bridge.adapters import jobstore as store
     patch = b'+\x1b]0;owned\x07 \xe2\x80\xae\r\n'
     monkeypatch.setattr(store, 'job_path', lambda job: job)
     monkeypatch.setattr(store, 'load', lambda job: {})
@@ -202,8 +205,8 @@ def test_patch_is_escaped_only_for_a_terminal(monkeypatch, tty, raw):
 
 @pytest.mark.parametrize('tty', [True, False])
 def test_patch_shows_line_separator_as_a_marker(monkeypatch, tty):
-    from agy_bridge import implement as module
-    from agy_bridge import jobstore as store
+    from agy_bridge.app import implement as module
+    from agy_bridge.adapters import jobstore as store
     patch = '+const s = "a\u2028b";\n'.encode()
     monkeypatch.setattr(store, 'job_path', lambda job: job)
     monkeypatch.setattr(store, 'load', lambda job: {})

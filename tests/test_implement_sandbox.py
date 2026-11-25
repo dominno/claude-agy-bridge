@@ -3,7 +3,8 @@ import sys
 
 import pytest
 
-from agy_bridge import config, edit_sandbox, sandbox
+from agy_bridge.adapters import edit_sandbox, host_tools
+from agy_bridge.core import config
 
 
 @pytest.fixture
@@ -17,7 +18,7 @@ def areas(tmp_path):
 @pytest.fixture
 def bubblewrap(monkeypatch):
     monkeypatch.setattr(edit_sandbox.sys, 'platform', 'linux')
-    monkeypatch.setattr(sandbox, 'executable', lambda _name, _path: '/usr/bin/bwrap')
+    monkeypatch.setattr(host_tools, 'executable', lambda _name, _path: '/usr/bin/bwrap')
 
 
 def test_agent_mounts_only_candidate_and_dedicated_profile(bubblewrap, areas, monkeypatch):
@@ -141,7 +142,7 @@ def test_offline_preflight_only_runs_trusted_probe(areas, monkeypatch):
 @pytest.mark.skipif(not sys.platform.startswith('linux'), reason='implementation sandbox uses Linux namespaces')
 def test_linux_namespace_mounts_and_network(areas, tmp_path):
     tree, profile = areas
-    if not sandbox.executable('bwrap', '/usr/bin:/bin'):
+    if not host_tools.executable('bwrap', '/usr/bin:/bin'):
         pytest.skip('Bubblewrap is unavailable')
     # Determine host namespace support using the raw, trusted pre-test. The
     # production check never uses these diagnostic strings to classify exits.
@@ -183,7 +184,7 @@ def _fake_bwrap(tmp_path, monkeypatch, output):
     tree = tmp_path / 'tree'
     tree.mkdir(mode=0o700)
     monkeypatch.setattr(edit_sandbox.sys, 'platform', 'linux')
-    monkeypatch.setattr(edit_sandbox.sandbox, 'executable', lambda name, path: str(tool))
+    monkeypatch.setattr(host_tools, 'executable', lambda name, path: str(tool))
     return tool, tree
 
 
@@ -206,5 +207,5 @@ def test_new_or_unparseable_bubblewrap_proceeds(tmp_path, monkeypatch, output, e
 
 def test_bubblewrap_version_check_is_linux_only(tmp_path, monkeypatch):
     monkeypatch.setattr(edit_sandbox.sys, 'platform', 'darwin')
-    monkeypatch.setattr(edit_sandbox.sandbox, 'executable', lambda *a: pytest.fail('bwrap looked up on macOS'))
+    monkeypatch.setattr(host_tools, 'executable', lambda *a: pytest.fail('bwrap looked up on macOS'))
     edit_sandbox.check_bwrap_version(str(tmp_path))

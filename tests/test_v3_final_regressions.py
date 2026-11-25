@@ -6,7 +6,10 @@ import sys
 
 import pytest
 
-from agy_bridge import cli, grading, runner
+from agy_bridge.app import doctor
+from agy_bridge.adapters import agy, sandbox
+from agy_bridge.app import grading
+from agy_bridge.port import process
 from sandbox_worker import bounded_python
 
 
@@ -68,7 +71,9 @@ def test_real_broken_profile_still_reports_unavailable(case):
         pytest.skip('macOS profile regression')
     code = '''
 import json, sys
-from agy_bridge import grading, sandbox
+from agy_bridge import cli  # binds the adapters to the ports
+from agy_bridge.adapters import sandbox
+from agy_bridge.app import grading
 root, spec = sys.argv[1], json.loads(sys.argv[2])
 sandbox.mac_profile = lambda *a, **kw: '(version 1)(deny default)'
 try:
@@ -102,19 +107,19 @@ def test_agy_probe_waits_are_bounded(tmp_path, monkeypatch, caller, outcome):
             raise OSError('cannot launch')
         kw['stdout'].write(b'agy 1.2.3\n')
         return Process()
-    monkeypatch.setattr(runner.subprocess, 'Popen', popen)
-    monkeypatch.setattr(runner, '_kill_group', lambda *args: kills.append(args))
+    monkeypatch.setattr(process.subprocess, 'Popen', popen)
+    monkeypatch.setattr(process, 'kill_group', lambda *args: kills.append(args))
     if caller == 'version':
         if outcome == 'success':
-            assert runner.detect_version('agy', {'LANG': 'C'}) == (1, 2, 3)
+            assert agy.detect_version('agy', {'LANG': 'C'}) == (1, 2, 3)
         else:
-            error = runner.AgyNotRun if outcome == 'launch' else runner.UnsupportedAgy
+            error = agy.AgyNotRun if outcome == 'launch' else agy.UnsupportedAgy
             message = {'launch': 'could not be started', 'timeout': 'did not finish', 'abandon': 'abandoned child'}[outcome]
             with pytest.raises(error, match=message):
-                runner.detect_version('agy', {'LANG': 'C'})
+                agy.detect_version('agy', {'LANG': 'C'})
     else:
         lines = []
-        cli._check_models('agy', {'LANG': 'C'}, str(tmp_path), lambda *args: lines.append(args))
+        doctor.check_models('agy', {'LANG': 'C'}, str(tmp_path), lambda *args: lines.append(args))
         assert len(lines) == 1 and lines[0][0] is (outcome == 'success')
         if outcome == 'abandon':
             assert 'abandoned child' in lines[0][2]
@@ -141,9 +146,9 @@ def test_ordinary_check_result_cannot_spoof_startup(tmp_path, monkeypatch, retur
     def popen(argv, **kw):
         kw['stdout'].write(output)
         return proc
-    monkeypatch.setattr(runner.subprocess, 'Popen', popen)
-    monkeypatch.setattr(runner, '_kill_group', lambda *args: None)
-    rc, detail = runner.run_scratch([sys.executable, '-c', 'pass'], str(tmp_path), str(tmp_path/'repo'))
+    monkeypatch.setattr(process.subprocess, 'Popen', popen)
+    monkeypatch.setattr(process, 'kill_group', lambda *args: None)
+    rc, detail = sandbox.run_scratch([sys.executable, '-c', 'pass'], str(tmp_path), str(tmp_path/'repo'))
     assert rc == returncode
     assert output.decode() in detail
     if rc < 0:

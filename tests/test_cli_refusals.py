@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from agy_bridge import stage
+from agy_bridge.core import stage
 
 R6_TEXT = 'Rule R6: the repository folder has no .git entry'
 

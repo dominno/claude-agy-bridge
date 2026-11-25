@@ -3,7 +3,8 @@ import subprocess
 
 import pytest
 
-from agy_bridge import stage, workspace
+from agy_bridge.adapters import workspace
+from agy_bridge.core import stage, text
 
 
 def git(root, *args, data=b''):
@@ -256,8 +257,8 @@ def test_escape_for_terminal_and_escape_invisible_mark_the_invisible_class():
 
 
 def test_report_and_stage_share_the_invisible_predicate():
-    from agy_bridge import report
-    assert report.strip_invisible is stage.strip_invisible
+    from agy_bridge.app import report
+    assert report.strip_invisible is text.strip_invisible
 
 
 CATEGORY_SAMPLES = ['\u2028', '\u2029', '\u00ad', '\u206a', '\ufff9', '\U0001d173', '\u034f', '\u17b4',
@@ -278,9 +279,9 @@ def test_category_based_invisible_characters_are_refused_in_an_added_js_line(wor
 
 def test_is_invisible_covers_format_categories_but_not_ordinary_text():
     for char in CATEGORY_SAMPLES + ['\U000e0041', '\ufe0f', '\ue000']:
-        assert stage.is_invisible(char), hex(ord(char))
+        assert text.is_invisible(char), hex(ord(char))
     for char in 'aZ09 \t\nąéß€中😀\u00a0\u3000':
-        assert not stage.is_invisible(char), hex(ord(char))
+        assert not text.is_invisible(char), hex(ord(char))
 
 
 def test_escape_marks_line_and_paragraph_separators():
@@ -291,6 +292,6 @@ def test_escape_marks_line_and_paragraph_separators():
 
 
 def test_clean_answer_strips_soft_hyphen_and_counts_it():
-    from agy_bridge import report
+    from agy_bridge.app import report
     out = report.clean_answer('pass\u00adword\u2028next'.encode())
     assert out == 'password\nnext\n' + report.INVISIBLE_NOTE % 1

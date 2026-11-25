@@ -22,8 +22,8 @@
   nested user namespaces, and refuses Bubblewrap older than 0.8.0 with the same gate as `implement`. Both messages
   add `Ubuntu 22.04 ships 0.6.x; Debian 12+/Ubuntu 24.04+ qualify`. The `unshare` fallback relies on its chroot,
   which makes a nested `unshare(CLONE_NEWUSER)` fail with EPERM (checked by a Linux-only test).
-- `/agy:delegate` no longer pre-approves `delegate`, and `/agy:queue` no longer pre-approves a real `queue add`
-  (only `queue add --dry-run`, plus `jobs list -C`), so every send goes through the permission prompt. `/agy:queue`
+- `/agy-bridge delegate` no longer pre-approves `delegate`, and `/agy-bridge queue` no longer pre-approves a real `queue add`
+  (only `queue add --dry-run`, plus `jobs list -C`), so every send goes through the permission prompt. `/agy-bridge queue`
   checks `status` before a real add and asks for confirmation when a watcher is running, and lists pending jobs
   with `jobs list -C` (showing files/context/need of jobs the user did not write) before `queue run`.
 
@@ -34,9 +34,9 @@
   `jobs patch` shows the class as `\u{XXXX}` markers on a terminal and in a pipe (`--raw` keeps exact bytes), and
   `clean_answer` strips it from delegate answers, queue results and the implement check-output tail, adding
   `note: N invisible Unicode characters removed` (a stderr diagnostic in `--cite` mode).
-- `/agy:delegate`, `/agy:queue` and `/agy:implement` set `disable-model-invocation: true`, and each shows the
-  dry-run manifest and sends only after the user confirms that file set. Every command body quotes the executable
-  as `"${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge"`; `allowed-tools` lists the quoted pattern next to the unquoted one.
+- `/agy-bridge delegate`, `/agy-bridge queue` and `/agy-bridge implement` set `disable-model-invocation: true`, and each shows the
+  dry-run manifest and sends only after the user confirms that file set. Every action quotes the executable
+  as `"<skill>/scripts/agy-bridge"`; `allowed-tools` lists the quoted pattern next to the unquoted one.
 - A `verified` implement job records `check_inputs_changed` (changed `--check` argv paths and files under an
   argv directory such as `pytest tests`, test and build
   configuration such as `conftest.py`/`pyproject.toml`/`Makefile`, `*.pth` files and `.github/workflows/`), and
@@ -72,7 +72,7 @@
   `_agent/`, at any depth like `.agents/`) and to other agents' instruction files: `.windsurf/`, `.clinerules`,
   `.roo/`, `.kiro/`, `.github/instructions/`, `.github/prompts/` and `AGENTS.override.md`, at export and at apply
   time.
-- `/agy:queue` no longer pre-approves `queue watch` or any `verdict`; they go through the permission prompt (see
+- `/agy-bridge queue` no longer pre-approves `queue watch` or any `verdict`; they go through the permission prompt (see
   the later entries: a real `queue add` and `queue run` are not pre-approved either).
 
 ### Added
@@ -110,15 +110,39 @@
 
 ### Changed
 
+- Internal: agy_bridge reorganised into core/port/adapters/app/cli
+- agy-bridge is now one agent skill, `agy-bridge`, in `.claude/skills/agy-bridge/` (with
+  `.agents/skills/agy-bridge` linking to it for Codex). The folder holds `SKILL.md`, the launcher
+  `scripts/agy-bridge`, the `agy_bridge` package (moved from `src/agy_bridge`), the documents in `references/`
+  (moved from `docs/`), example files and the infographic in `assets/`, its own `README.md` and `LICENSE`. Install it
+  with `npx skills add dominno/claude-agy-bridge --skill agy-bridge -a claude-code -a codex` (add `-g` for all
+  projects). The plugin marketplace still works: `/plugin install agy@agy-bridge` installs plugin `agy`, whose
+  `skills` entry points at the same folder; it has no `commands/` and no `bin/` any more. The `agy-bridge` CLI,
+  its options, exit codes and the pip console script are unchanged.
+- The seven slash commands are merged into the skill's action table. The skill sets
+  `disable-model-invocation: true` (Codex: `agents/openai.yaml` with `allow_implicit_invocation: false`), so
+  `doctor`, `status`, `jobs` and `dry-run` are no longer started by the model on its own either. `allowed-tools`
+  pre-approves the union of the old read-only rules (`dry-run`, `events`, `doctor`, `jobs list`,
+  `queue add --dry-run`, `queue status`, `status`) through `${CLAUDE_SKILL_DIR}/scripts/agy-bridge`; every send and
+  every state change still goes through the permission prompt, after the manifest and an explicit confirmation.
+- Migration: `/agy:delegate` → `/agy-bridge delegate`, `/agy:dry-run` → `/agy-bridge dry-run`,
+  `/agy:doctor` → `/agy-bridge doctor`, `/agy:queue` → `/agy-bridge queue`, `/agy:implement` →
+  `/agy-bridge implement`, `/agy:jobs` → `/agy-bridge jobs`, `/agy:status` → `/agy-bridge status`. With the
+  plugin, the namespaced form is `/agy:agy-bridge <action>`; in Codex type `$agy-bridge <action>`. Scripts that
+  called `<checkout>/bin/agy-bridge` should call `<checkout>/.claude/skills/agy-bridge/scripts/agy-bridge` (or the
+  pip-installed `agy-bridge`). Stop a detached watcher (`status`, then `kill <pid>`) before updating: its recorded
+  code root moves from `src/` to `.claude/skills/agy-bridge/scripts/`, so a watcher left running prints the
+  existing code-root warning.
+
 - Suggested commands quote paths for the shell (`stage.shell_arg`): `status -C`, `queue run -C`, `queue add -C`,
   `--queue-dir`/`--results-dir` in `verdict` refusals, `queue cancel` and the detached-watcher failure, so a repository
   path with spaces can be copied as is. `queue cancel` of an unknown job now exits 1 (the usage code, like
   `verdict --job`); a running, finished or already cancelled job still exits 4.
 
 - Every runner keeps a SIGINT/SIGTERM/SIGHUP that was already ignored at startup (the `nohup` convention).
-- `/agy:queue` no longer pre-approves `queue run`, so a drain goes through the permission prompt; it runs `queue run`
+- `/agy-bridge queue` no longer pre-approves `queue run`, so a drain goes through the permission prompt; it runs `queue run`
   only when the request says run, after showing `queue status` and every pending job (including other sessions'
-  jobs). `/agy:queue`, `/agy:delegate` and `docs/QUEUE.md` say to give the Bash tool a timeout above the job
+  jobs). `/agy-bridge queue`, `/agy-bridge delegate` and `references/QUEUE.md` say to give the Bash tool a timeout above the job
   timeout (at most 10 minutes) or run in the background, to check `status`/`events` before retrying a killed
   command, and to start an unattended watcher only on request with `queue watch --detach`.
 - `queue run` names the specific reason for an invalid job (for example `file not found: f.txt`, the rule line, or
@@ -133,10 +157,10 @@
 - `verdict --verdict pass` refuses with the usage exit code when no result or queue job file exists for `--job`,
   lists recent jobs and creates nothing; `--force` records anyway. `fixes` and `reject` on such a job record with a
   warning, so a failed or refused delegate (no result file) can still be rejected.
-- `/agy:queue` states that runs also send `.agy-bridge.json` `context_files` unless `"context": false`, and a NEED
+- `/agy-bridge queue` states that runs also send `.agy-bridge.json` `context_files` unless `"context": false`, and a NEED
   round with `"need": true`; it asks for both to be false unless authorized and to preview with
-  `queue add --dry-run`. Command prompts reference `${CLAUDE_PLUGIN_ROOT}/docs/...` and the plugin binary form used
-  by their pre-approval rule.
+  `queue add --dry-run`. The skill references `references/...` and the launcher form used by its pre-approval
+  rule.
 - `jobs -C ROOT` (no subcommand) lists jobs like `jobs list`; `queue`, `status`, `verdict` and `verdicts` have help
   text.
 
@@ -149,10 +173,10 @@
 - `queue add` names unknown job fields and lists the allowed ones, says when the job is not a JSON object, echoes a
   refused file path (escaped), and reports `job file not found: <path>` for a missing job file. `--repo is not a
   directory` echoes the value. `queue add --help` lists the job fields.
-- `/agy:delegate` and `/agy:dry-run` run the dry run with exactly the same `--file`/`--glob`/`--cite`/
-  `--allow-fragment-file` arguments as the delegate. `/agy:implement` shows the `--check` JSON argv form, states the
+- `/agy-bridge delegate` and `/agy-bridge dry-run` run the dry run with exactly the same `--file`/`--glob`/`--cite`/
+  `--allow-fragment-file` arguments as the delegate. `/agy-bridge implement` shows the `--check` JSON argv form, states the
   Linux/bubblewrap requirement, and saves `implement-patch --raw` to a file whose hash (`sha256sum` or
-  `shasum -a 256`) is passed to `implement-apply`; `docs/IMPLEMENT.md` adds the macOS `shasum` form.
+  `shasum -a 256`) is passed to `implement-apply`; `references/IMPLEMENT.md` adds the macOS `shasum` form.
 
 ### Fixed
 
@@ -201,9 +225,9 @@
 
 ### Docs
 
-- README and `docs/QUEUE.md` add "Update or uninstall" (stop detached watchers, update, restart);
-  README, `docs/IMPLEMENT.md` and `docs/COMPAT.md` state the Bubblewrap 0.8.0 minimum.
-- `docs/THREAT_MODEL.md`, `docs/IMPLEMENT.md` and `/agy:implement` state that the AGY agent sandbox uses bwrap
+- README and `references/QUEUE.md` add "Update or uninstall" (stop detached watchers, update, restart);
+  README, `references/IMPLEMENT.md` and `references/COMPAT.md` state the Bubblewrap 0.8.0 minimum.
+- `references/THREAT_MODEL.md`, `references/IMPLEMENT.md` and `/agy-bridge implement` state that the AGY agent sandbox uses bwrap
   `--share-net`: it can reach host loopback services, the LAN, cloud instance metadata (`169.254.169.254`) and
   abstract-namespace Unix sockets, held back only by AGY's tool policy. Run implement in a VM or container without
   sensitive loopback services and enforce IMDSv2 with hop limit 1 on cloud VMs.

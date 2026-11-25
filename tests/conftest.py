@@ -2,8 +2,11 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "src"))
-TEST_MARKER = os.path.join(ROOT, "src", "agy_bridge", "_test_mode")
+# The agent skill folder: SKILL.md, references/, assets/ and scripts/ (the launcher plus the agy_bridge package).
+SKILL = os.path.join(ROOT, ".claude", "skills", "agy-bridge")
+SCRIPTS = os.path.join(SKILL, "scripts")
+sys.path.insert(0, SCRIPTS)
+TEST_MARKER = os.path.join(SCRIPTS, "agy_bridge", "_test_mode")
 
 
 import atexit  # noqa: E402
@@ -22,6 +25,8 @@ def pytest_configure(config):
     os.environ["AGY_BRIDGE_TEST_MODE"] = "1"
     # Lets AGY_BRIDGE_HOME work while tests run; the file is removed afterwards (see config.TEST_MARKER).
     open(TEST_MARKER, "w").close()
+    # The composition root binds every port to its adapter, so use cases called directly by tests can run.
+    import agy_bridge.cli  # noqa: F401
 
 
 def pytest_unconfigure(config):
@@ -48,7 +53,7 @@ def guarded_sandbox(request, monkeypatch):
     if request.node.name in ('test_test_timeout_kills_process_group',
                              'test_missing_sandbox_refuses_unless_explicit'):
         return
-    from agy_bridge import runner, sandbox
+    from agy_bridge.adapters import sandbox
     from sandbox_worker import scratch_call
     def guarded(argv, tree, repo, extra_env=None, timeout=300, **kwargs):
         result = scratch_call(argv, tree, repo, extra_env, timeout=timeout, **kwargs)
@@ -57,9 +62,9 @@ def guarded_sandbox(request, monkeypatch):
                 pytest.skip('real sandbox preflight: ' + result['unavailable'])
             raise sandbox.Unavailable(result['unavailable'])
         return tuple(result['result'])
-    monkeypatch.setattr(runner, 'run_scratch', guarded)
+    monkeypatch.setattr(sandbox, 'run_scratch', guarded)
 
-BIN = os.path.join(ROOT, "bin", "agy-bridge")
+BIN = os.path.join(SCRIPTS, "agy-bridge")
 FAKE = os.path.join(ROOT, "tests", "fake_agy", "agy")
 SECRETS = {
     "EXAMPLE_API_KEY": "fake-example-not-a-real-key",
@@ -120,7 +125,7 @@ class Harness:
                               timeout=timeout, cwd=str(cwd or self.root))
 
     def raw(self, *argv, extra_env=None, cwd=None, with_fake=True):
-        """Call bin/agy-bridge with exactly these arguments (no --repo added)."""
+        """Call scripts/agy-bridge with exactly these arguments (no --repo added)."""
         return subprocess.run([sys.executable, BIN, *argv], capture_output=True, text=True,
                               env=self.env(extra_env, with_fake), timeout=60, cwd=str(cwd or self.root))
 

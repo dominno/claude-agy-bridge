@@ -1,0 +1,9 @@
+{
+  "name": "review-parser-01",
+  "task": "Review the parser against its tests. If a source is missing, write NEED: path/to/file on its own line.",
+  "files": ["src/parser.py", "tests/test_parser.py"],
+  "timeout": "5m",
+  "cite": false,
+  "context": false,
+  "need": false
+}

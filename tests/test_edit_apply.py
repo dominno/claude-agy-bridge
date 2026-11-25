@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from agy_bridge import edit_apply, workspace
+from agy_bridge.adapters import edit_apply, workspace
 
 
 @pytest.fixture

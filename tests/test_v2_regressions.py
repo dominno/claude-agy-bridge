@@ -7,7 +7,8 @@ import time
 
 import pytest
 
-from agy_bridge import citations, cli, events, scan, stage
+from agy_bridge import cli
+from agy_bridge.core import citations, events, scan, stage
 
 
 KEY = '9f8e7d6c5b4a39281706f5e4d3c2b1a0'  # invented, unshaped credential
