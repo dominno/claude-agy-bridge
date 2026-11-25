@@ -80,7 +80,7 @@ def test_verification_stream_has_bounded_tail_and_cancels(tmp_path):
 
 
 @pytest.mark.parametrize('exit_code', [0, 1, 124, 126, 127])
-def test_offline_check_classifies_a_real_exit_by_the_private_status_channel(areas, monkeypatch, exit_code):
+def test_offline_check_classifies_a_real_exit_by_the_private_status_channel(areas, bubblewrap, monkeypatch, exit_code):
     tree, _ = areas
 
     def wrap(argv, wrapped_tree, status_fd):
@@ -101,7 +101,7 @@ def test_offline_check_classifies_a_real_exit_by_the_private_status_channel(area
 
 @pytest.mark.parametrize('status', [b'', b'{"child-pid": 123}\n',
                                    b'{"child-pid": 123}\n{"exit-code": 0}\n'])
-def test_unconfirmed_check_launch_is_infrastructure_failure(areas, monkeypatch, status):
+def test_unconfirmed_check_launch_is_infrastructure_failure(areas, bubblewrap, monkeypatch, status):
     tree, _ = areas
 
     def wrap(_argv, _tree, status_fd):
@@ -118,7 +118,7 @@ def test_unconfirmed_check_launch_is_infrastructure_failure(areas, monkeypatch, 
         edit_sandbox.run_test(['example-check'], tree=tree, timeout_s=5)
 
 
-def test_offline_check_supervisor_timeout_and_cancel_keep_existing_results(areas, monkeypatch):
+def test_offline_check_supervisor_timeout_and_cancel_keep_existing_results(areas, bubblewrap, monkeypatch):
     tree, _ = areas
     monkeypatch.setattr(edit_sandbox, '_test_command',
                         lambda *_: [sys.executable, '-c', 'import time; time.sleep(30)'])

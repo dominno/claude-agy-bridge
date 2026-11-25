@@ -7,24 +7,54 @@ the same conversation.
 
 ## Set up the worker
 
-Use Linux with Bubblewrap 0.8.0 or later (the sandbox passes `--disable-userns`; Ubuntu 22.04 ships 0.6.x, and
-Debian 11 and RHEL 9 also ship older versions; Debian 12+/Ubuntu 24.04+ qualify) in `/usr/bin` or `/bin` and working unprivileged user namespaces, Git, and an AGY CLI native
-binary at version 1.5.16 or later in major version 1. Use the root of a Git checkout whose Git directory is inside
-the checkout. The worker runs `agy --version` inside Bubblewrap before sending a task. Use a Linux host
-or VM with working user namespaces if your container disables them. [Recorded compatibility and evidence](COMPAT.md).
+Both platforms need Git, an AGY CLI native binary at version 1.5.16 or later in major version 1, and the root of a Git
+checkout whose Git directory is inside the checkout. The worker runs `agy --version` inside the sandbox before sending
+a task. [Recorded compatibility and evidence](COMPAT.md).
 
-Create a dedicated profile outside the project and the bridge's job directory. For API-key authentication, set
-`GEMINI_API_KEY` in the invoking environment and pass `--gemini-api-key`. The bridge selects the Gemini model provider
-in that session. A dedicated profile with cached credentials usable inside Bubblewrap can also work. The sandbox
-exposes the dedicated profile without the host keyring. [AGY authentication](https://antigravity.google/docs/install?tab=cli).
+- **Linux:** Bubblewrap 0.8.0 or later (the sandbox passes `--disable-userns`; Ubuntu 22.04 ships 0.6.x, and Debian 11
+  and RHEL 9 also ship older versions; Debian 12+/Ubuntu 24.04+ qualify) in `/usr/bin` or `/bin` and working
+  unprivileged user namespaces. Use a Linux host or VM with working user namespaces if your container disables them.
+  AGY sees the tree at `/workspace` and the profile at `/home/agy`.
+- **macOS:** `/usr/bin/sandbox-exec` (part of macOS; measured on macOS 13 with AGY 1.5.17). AGY runs under a
+  generated default-deny Seatbelt policy with its real paths: `HOME` is the dedicated profile, the working directory
+  is the private job tree, and `TMPDIR` is `<profile>/tmp` (created with mode 0700). It may read the operating system
+  libraries and its own binary (the resolved path, e.g. the target of `~/.local/bin/agy`), read and write only the
+  job tree and the profile, execute only that binary (no fork, no shell, no `/usr/bin/security`), and use the
+  network. Everything else in your home folder, including the source repository, `~/.ssh`, `~/.gemini`,
+  `~/.config`, `~/Library/Keychains` and the login Keychain, is unreadable. Details and the differences from
+  Bubblewrap: [threat model](THREAT_MODEL.md#macos-sandbox-exec-backend).
 
-Install `agy-bridge` with `python3 -m pip install /path/to/claude-agy-bridge` in your virtual environment, or use
-the skill's `scripts/agy-bridge` in place of `agy-bridge` below. From your
-Git project, check the isolated worker startup. This probe only runs `agy --version` inside Bubblewrap.
-It does not submit a job or check the profile's authentication.
+Other systems are refused (`implement requires Linux with Bubblewrap or macOS with sandbox-exec`).
+
+### Authenticate the dedicated profile
+
+Create a dedicated profile outside the project, your home's tool folders and the bridge's job directory, then sign it
+in once with the Google account (subscription) you want jobs to use. AGY keeps that sign-in as files inside the
+profile, which is what the sandbox exposes:
 
 ```sh
 mkdir -m 700 "$HOME/agy-implementation-profile"
+HOME="$HOME/agy-implementation-profile" agy    # sign in once in the browser, then quit
+```
+
+Measured with AGY 1.5.17 on macOS: the sign-in is stored in `<profile>/.gemini/antigravity-cli/antigravity-oauth-token`
+(plus `<profile>/Library/Application Support/antigravity/credential-user-scope`). AGY first tries the OS credential
+manager (on macOS it runs `/usr/bin/security`); inside the sandbox that is denied, and AGY falls back to the
+file-based token. The sandbox never grants Keychain access, and your normal AGY login in the login Keychain is not
+used. On first use AGY also writes `.gemini/config` with its defaults (an empty MCP file, the built-in `swarm`
+plugin switch, a migration marker and the default CLI project); the profile check accepts exactly those defaults and
+refuses any other content there.
+
+For API-key authentication instead, set `GEMINI_API_KEY` in the invoking environment and pass `--gemini-api-key`.
+The bridge forwards only that variable into the sandbox (never on the command line) and selects the Gemini model
+provider in that session. [AGY authentication](https://antigravity.google/docs/install?tab=cli).
+
+Install `agy-bridge` with `python3 -m pip install /path/to/claude-agy-bridge` in your virtual environment, or use
+the skill's `scripts/agy-bridge` in place of `agy-bridge` below. From your
+Git project, check the isolated worker startup. This probe only runs `agy --version` inside the sandbox
+(Bubblewrap or `sandbox-exec`). It does not submit a job or check the profile's authentication.
+
+```sh
 agy-bridge doctor --implementation --repo "$PWD" --profile "$HOME/agy-implementation-profile"
 ```
 
@@ -42,8 +72,8 @@ Review the manifest and `files_not_sent`. The snapshot uses the current bytes of
 or untracked inputs that match your selection, and records the current Git `HEAD`. Include the source, test, and
 configuration files needed by the check. Submission can send the task and selected files to Google for processing.
 
-Submit the same command without `--dry-run` and include the profile. This example assumes `GEMINI_API_KEY` is already
-set in your environment:
+Submit the same command without `--dry-run` and include the profile. This example uses API-key authentication and
+assumes `GEMINI_API_KEY` is already set in your environment; omit `--gemini-api-key` for a signed-in profile:
 
 ```sh
 job_id=$(agy-bridge jobs start \
@@ -110,7 +140,7 @@ agy-bridge jobs resume "$job_id"
 ```
 
 Submission starts a detached local worker and returns a job ID. Use `--foreground` for a synchronous exit code.
-The Linux host and worker must keep running. The defaults are 25 minutes per AGY turn and two hours per invocation.
+The host and worker must keep running. The defaults are 25 minutes per AGY turn and two hours per invocation.
 Set `--turn-timeout` or `--job-timeout` at submission. The bridge can finish processing a patch after stopping AGY.
 A resume starts a fresh invocation and continues the same working copy and saved AGY conversation when available.
 Cancellation, timeout, quota exhaustion, and worker interruption retain the copy. A partial patch is available once
@@ -121,7 +151,9 @@ and start a new job.
 
 `verified` means the configured check passed against the captured patch. `ready` means the job produced a patch without
 a configured check. `checks_failed` includes the last nonzero check result. The check uses the supplied JSON argv, a
-system or workspace-relative executable, and a separate offline Bubblewrap sandbox. Review changes to any files that
+system or workspace-relative executable, and a separate offline sandbox (Bubblewrap on Linux; on macOS the
+`sandbox-exec` profile used for grading, which denies networking, process creation and other executables, so a check
+that starts subprocesses fails there). Review changes to any files that
 define the check along with the rest of the patch. A `verified` job records `check_inputs_changed`: the changed
 paths that are an argv path of `--check` (argv[0] included, normalised) or lie under one (`pytest tests` covers
 `tests/test_x.py`; a bare `.` does not count), a file named `conftest.py`, `pytest.ini`,
@@ -131,9 +163,10 @@ paths that are an argv path of `--check` (argv[0] included, normalised) or lie u
 `WARN check inputs changed by the agent: <paths>; review them before trusting verified`: the agent may have made
 the check pass by changing the check itself, so review those files first. The phase stays `verified`. Put required tools on the host
 software image and include the project inputs explicitly. CPU, memory, and disk limits depend on the host. The AGY
-sandbox allows provider network access and mounts the isolated writable profile. It uses bwrap `--share-net`,
-the host network namespace: the agent can reach host loopback services, the local network, cloud instance metadata
-(`169.254.169.254`) and abstract-namespace Unix sockets (X11, some D-Bus). Only AGY's session policy, which denies
+sandbox allows provider network access and the isolated writable profile. On Linux it uses bwrap `--share-net`, the
+host network namespace; on macOS the Seatbelt policy allows `network*` the same way. The agent can reach host loopback services, the local network, cloud instance metadata
+(`169.254.169.254`) and local Unix sockets (on Linux abstract-namespace sockets such as X11 and some D-Bus buses).
+Only AGY's session policy, which denies
 its command, URL and MCP tools, keeps it from using them. Run implementation jobs in a VM or container without
 sensitive loopback services, and on cloud VMs enforce IMDSv2 with hop limit 1
 ([network exposure](THREAT_MODEL.md#network-exposure-of-the-agy-agent)). The private job directory under
@@ -169,7 +202,7 @@ inspect, stage, and commit the resulting working-tree changes.
 
 ## Remote execution options
 
-Run `agy-bridge` from a Linux host you can reach via SSH if you need a job to continue after disconnecting your
+Run `agy-bridge` from a Linux or macOS host you can reach via SSH if you need a job to continue after disconnecting your
 laptop. Keep the checkout and the dedicated AGY profile on that host. Use `jobs show` and `jobs patch` there to
 inspect the result. Applying with `jobs apply` changes the checkout on that host.
 
@@ -177,5 +210,5 @@ Google's [Remote Control](https://antigravity.google/docs/remote-control/?tab=cl
 session on a running host through a browser. [Remote Agents](https://antigravity.google/docs/remote-agents?tab=cli)
 runs in the cloud, using the sources attached to a remote project. An unavailable project identifier can cause
 the CLI to open the default project. Check the selected project before entering a task. Remote Agents does not
-support `--print`. Both modes require Google Account sign-in. The bridge's current integration uses the local Linux
+support `--print`. Both modes require Google Account sign-in. The bridge's current integration uses the local
 worker. [AGY sign-in change](https://github.com/google-antigravity/antigravity-cli/releases/tag/1.5.12).

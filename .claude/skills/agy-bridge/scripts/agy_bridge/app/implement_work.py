@@ -208,8 +208,9 @@ class _Run:
 class _Agent:
     """The verified AGY executable, its environment and version, and the wrapper that isolates each turn."""
 
-    def __init__(self, exe, env, version, tree, profile):
+    def __init__(self, exe, env, version, tree, profile, private_paths):
         self.exe = exe
+        self.private_paths = private_paths
         self.env = env
         self.version = version
         self.tree = tree
@@ -232,7 +233,7 @@ def _prepare_agent(run, work):
                                      deadline=run.deadline)
     version = agy.parse_version(version_text)
     agy.require_edit_version(version)
-    return _Agent(exe, env, version, work.tree, profile)
+    return _Agent(exe, env, version, work.tree, profile, sandbox.agent_private_paths(tree=work.tree, profile=profile))
 
 
 def _baseline_check(run, work, original):
@@ -268,7 +269,8 @@ def _turn(run, work, agent, attempt, feedback):
                                            min(remaining, state['turn_timeout_s']), state['conversation_id'],
                                            _prompt(state, feedback), on_conversation=run.record_conversation,
                                            version=agent.version, wrap=agent.wrap, should_cancel=run.should_cancel,
-                                           on_activity=run.record_activity, deadline=run.deadline)
+                                           on_activity=run.record_activity, deadline=run.deadline,
+                                           private_paths=agent.private_paths)
 
 
 def _after_turn(run, work, result, last_changes):

@@ -81,7 +81,7 @@ absolute `--profile` path to a dedicated directory with mode `0700`. `--gemini-a
 existing environment variable `GEMINI_API_KEY`. The option is saved with the job. Supply `GEMINI_API_KEY` in the
 environment again when resuming that job.
 
-Use `doctor --implementation --profile <absolute path>` to check whether Bubblewrap can run the required AGY
+Use `doctor --implementation --profile <absolute path>` to check whether the sandbox (Bubblewrap on Linux, `sandbox-exec` on macOS) can run the required AGY
 version with that profile. The probe runs `agy --version` in a temporary workspace and does not create a job or
 check authentication. Pass `--repo <root>` to keep executable discovery outside the selected project.
 

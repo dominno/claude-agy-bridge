@@ -2,7 +2,7 @@
 
 agy-bridge is an agent skill that lets Claude Code or Codex hand work to Google's Antigravity CLI (`agy`) without
 giving it your repository. Use `/agy-bridge delegate` to get a second model's read-only review or summary of files you
-choose, and `/agy-bridge implement` (Linux) to let Antigravity edit an isolated copy and return a patch you review
+choose, and `/agy-bridge implement` (Linux or macOS) to let Antigravity edit an isolated copy and return a patch you review
 before anything touches your code.
 
 **Why use it**
@@ -33,8 +33,10 @@ never run. The confirmation step is an instruction to Claude; the permission pro
 - Antigravity CLI major version 1, installed and signed in
   ([Google's instructions](https://antigravity.google/docs/cli-using)). Read-only delegation supports 1.x through
   1.5.6 and 1.5.16 onwards.
-- Only for `implement`: Linux, Git, AGY 1.5.16 or later, Bubblewrap 0.8.0 or later with working unprivileged user
-  namespaces, and a dedicated AGY profile folder. [Setup](.claude/skills/agy-bridge/references/IMPLEMENT.md).
+- Only for `implement`: Git, AGY 1.5.16 or later, a dedicated AGY profile folder signed in once
+  (`HOME="$HOME/agy-implementation-profile" agy`) or `GEMINI_API_KEY`, and either Linux with Bubblewrap 0.8.0 or
+  later and working unprivileged user namespaces, or macOS with `/usr/bin/sandbox-exec`.
+  [Setup](.claude/skills/agy-bridge/references/IMPLEMENT.md).
 - Only for `grade-mutants` and `apply-diff`: `sandbox-exec` on macOS, or Bubblewrap 0.8.0+ (or `unshare`) on Linux.
 
 ## Install
@@ -114,7 +116,7 @@ agent never starts it on its own. In Claude Code its
 `allowed-tools` pre-approves the listed bridge subcommands, none of which sends; it is not a restriction. Details
 and every option: [`references/CLI.md`](.claude/skills/agy-bridge/references/CLI.md).
 
-## Coding jobs (Linux)
+## Coding jobs (Linux and macOS)
 
 `/agy-bridge implement`, or `agy-bridge jobs start --dry-run -f src/parser.py -f tests/test_parser.py --write-dir src
 --check '["python3", "-m", "unittest"]' -- 'Fix the parser bug'`, previews the job. Submit without `--dry-run` and
@@ -160,8 +162,9 @@ A detached watcher keeps running the code it started with. Before updating or un
 ## Project status
 
 Version 0.3.0. The test suite uses a fake `agy`; the bridge has been run once against the real `agy` 1.4.3 with
-fake files only, and a basic delegation also worked on 1.4.12. An authenticated end-to-end implementation job has not
-been verified yet. [What was measured](.claude/skills/agy-bridge/references/COMPAT.md).
+fake files only, and a basic delegation also worked on 1.4.12. Authenticated end-to-end implementation jobs (edit,
+offline check, resume, apply) were run on macOS 13 with AGY 1.5.17 and a signed-in dedicated profile (synthetic
+files); the Linux Bubblewrap path has offline coverage only. [What was measured](.claude/skills/agy-bridge/references/COMPAT.md).
 
 ## Documentation
 

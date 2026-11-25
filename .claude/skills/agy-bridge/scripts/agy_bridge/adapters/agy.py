@@ -53,10 +53,10 @@ _AUTO_DEFAULT_VERSION = (1, 5, 7)
 _BLOCKED_TOOLS = ("command", "unsandboxed", "read_url", "execute_url", "mcp")
 
 
-def _session_settings(edit: bool, api_key_auth: bool = False) -> str:
+def _session_settings(edit: bool, api_key_auth: bool = False, private_paths=GUEST_PRIVATE_PATHS) -> str:
     denied = [action + "(*)" for action in _BLOCKED_TOOLS]
     if edit:
-        denied.extend(action + "(" + path + ")" for path in GUEST_PRIVATE_PATHS
+        denied.extend(action + "(" + path + ")" for path in private_paths
                       for action in ("read_file", "write_file"))
     else:
         denied.append("write_file(*)")
@@ -167,7 +167,8 @@ def require_edit_version(version):
                              (_edit_version_label(), MIN_AGY_VERSION[0]))
 
 
-def build_edit_argv(version, exe, model, conversation_id, prompt, timeout_s, api_key_auth=False):
+def build_edit_argv(version, exe, model, conversation_id, prompt, timeout_s, api_key_auth=False,
+                    private_paths=GUEST_PRIVATE_PATHS):
     require_edit_version(version)
     if conversation_id is not None and not valid_conversation_id(conversation_id):
         raise config.UsageError("invalid saved AGY conversation ID")
@@ -177,7 +178,8 @@ def build_edit_argv(version, exe, model, conversation_id, prompt, timeout_s, api
     # The host timer is authoritative. Give it a short lead over the provider
     # timer, which still bounds the turn if the host supervisor is delayed.
     provider_timeout = "%ds" % (math.ceil(timeout_s) + 1)
-    argv = [exe, "--mode=accept-edits", "--settings", _session_settings(edit=True, api_key_auth=api_key_auth),
+    settings = _session_settings(edit=True, api_key_auth=api_key_auth, private_paths=private_paths)
+    argv = [exe, "--mode=accept-edits", "--settings", settings,
             "--disable-slash-commands", "--output-format", "stream-json",
             "--print-timeout", provider_timeout]
     if model:
@@ -421,7 +423,8 @@ def run_edit_agy(
         on_conversation: Optional[Callable[[str], None]] = None, *,
         wrap, max_out: int = config.MAX_OUT_BYTES, should_cancel=None,
         on_activity: Optional[Callable[[], None]] = None,
-        version: Optional[Tuple[int, int, int]] = None, deadline=None) -> EditRunResult:
+        version: Optional[Tuple[int, int, int]] = None, deadline=None,
+        private_paths=GUEST_PRIVATE_PATHS) -> EditRunResult:
     """Run one isolated coding turn under a relative limit and an optional job deadline."""
     started = time.monotonic()
     deadline = execution_deadline(started, timeout_s, deadline)
@@ -435,7 +438,7 @@ def run_edit_agy(
         if remaining <= 0:
             raise _StoppedBeforeLaunch("timeout")
         argv = wrap(build_edit_argv(version, exe, model, conversation_id, prompt, remaining,
-                                   api_key_auth="GEMINI_API_KEY" in env))
+                                   api_key_auth="GEMINI_API_KEY" in env, private_paths=private_paths))
         _check_stop(should_cancel, deadline)
     except _StoppedBeforeLaunch as stopped:
         return _before_edit_launch(conversation_id, started, stopped.kind)

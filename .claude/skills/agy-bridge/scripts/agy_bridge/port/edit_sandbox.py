@@ -1,6 +1,6 @@
 """Port: the isolation for implementation jobs (the agent turn and its offline check) and its errors.
 
-The adapter is agy_bridge.adapters.edit_sandbox (Bubblewrap on Linux).
+The adapter is agy_bridge.adapters.edit_sandbox (Bubblewrap on Linux, sandbox-exec on macOS).
 """
 from __future__ import annotations
 
@@ -32,6 +32,8 @@ class EditSandbox(Protocol):
     def agent_environment(self, *, use_api_key=False) -> dict: ...
 
     def agent_command(self, argv, *, tree, profile) -> list: ...
+
+    def agent_private_paths(self, *, tree, profile) -> tuple: ...
 
     def preflight(self, *, tree, profile, exe, should_cancel=None, deadline=None) -> str: ...
 

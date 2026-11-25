@@ -89,7 +89,8 @@ class ModelRunner(Protocol):
                      conversation_id: Optional[str], prompt: str,
                      on_conversation: Optional[Callable[[str], None]] = None, *, wrap, max_out: int = ...,
                      should_cancel=None, on_activity: Optional[Callable[[], None]] = None,
-                     version: Optional[Tuple[int, int, int]] = None, deadline=None) -> EditRunResult: ...
+                     version: Optional[Tuple[int, int, int]] = None, deadline=None,
+                     private_paths=...) -> EditRunResult: ...
 
 
 use = Slot('model runner')

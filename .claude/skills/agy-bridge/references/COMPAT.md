@@ -10,9 +10,9 @@ on a throw-away account, see [MANUAL_TEST.md](MANUAL_TEST.md)).
   read-only runner pins session permissions with `--settings`. The bridge refuses versions 1.5.7–1.5.15 because
   those releases can default to Auto and are outside the bridge's supported session-settings range.
 - An unknown major version fails closed with exit code 14. The implementation workflow requires AGY 1.5.16 or above
-  within major version 1 and Linux Bubblewrap 0.8.0 or later (`--disable-userns`; `doctor --implementation` and the
-  implement preflight refuse an older `bwrap --version`). Its authenticated edit and resume behavior stays unverified until a
-  real account and a host that supports Bubblewrap are available.
+  within major version 1 and either Linux Bubblewrap 0.8.0 or later (`--disable-userns`; `doctor --implementation`
+  and the implement preflight refuse an older `bwrap --version`) or macOS `sandbox-exec`. Its authenticated edit,
+  check, resume and apply were measured on macOS (below); on Linux with Bubblewrap they stay unverified.
 
 ## Unverified assumptions
 | # | Assumption | Where it lives | How to settle it |
@@ -77,14 +77,34 @@ only): doctor, dry-run and delegate work, and writes, commands, reads outside th
 possible headless without a permission. That is one version on one machine, not a guarantee. A basic delegation
 also worked on 1.4.12. The plugin (then with `/agy:*` slash commands) has been loaded in real Claude Code sessions.
 Implementation has offline coverage
-for edit, check, resume and patch application; an authenticated end-to-end implementation job still needs
-verification on a Linux host with working Bubblewrap namespaces.
+for edit, check, resume and patch application. Authenticated end-to-end implementation jobs ran on macOS 13 with
+AGY 1.5.17 (sandbox-exec backend, synthetic files); on a Linux host with working Bubblewrap namespaces they still need
+verification.
+
+## Measured on agy 1.5.17, macOS 13 (2026-11-25, one Intel Mac, one account)
+
+Implementation jobs under the macOS `sandbox-exec` backend, with a dedicated profile signed in once with
+`HOME=~/agy-implementation-profile agy` (Google account, subscription, no API key) and a synthetic Git repository
+(`calc.py`, `tests/test_calc.py`).
+
+| Item | Measured |
+|---|---|
+| Sign-in storage | The profile sign-in is file based: `.gemini/antigravity-cli/antigravity-oauth-token` (0600) and `Library/Application Support/antigravity/credential-user-scope`. During the sign-in AGY's `Keyring SaveToken timed out after 5s` and it switched to file storage; no new Keychain item appeared. `HOME=<empty dir> agy` does not reuse the normal login (Keychain services `gemini`, `Antigravity Safe Storage`) |
+| Keychain inside the sandbox | AGY runs `/usr/bin/security` for the OS credential manager; the policy denies that exec (`fork/exec /usr/bin/security: operation not permitted`) and AGY loads the file token (`ChainedAuth: authenticated via keyring (effective: keyring)` from the file fallback). No securityd/Keychain Mach service is needed |
+| Mach services | Without `com.apple.trustd.agent` every HTTPS call fails (`x509: OSStatus -26276`); with it and `com.apple.system.logger` only, `agy models` and editing turns work. `com.apple.trustd`, configd and mDNSResponder were not needed |
+| Process creation | `agy --version`, `agy models` and editing turns work with `process-fork` denied and `process-exec` limited to the AGY binary; AGY's language server runs in-process and listens on localhost (network allowed) |
+| Temp | AGY wrote nothing to `TMPDIR` in these runs; it still gets `<profile>/tmp` |
+| `.gemini/config` | AGY creates it on first run with `mcp_config.json` (empty), `config.json` `{"plugins":{"swarm":{"enabled":true}}}`, `.migrated` and `projects/default-cli-project.json`; the former blanket refusal of `.gemini/config` rejected every used profile |
+| Negative probes | Inside the agent policy (with `/bin/bash` builtins standing in for AGY): reading `~/.ssh/known_hosts`, `~/.gemini/antigravity-cli/settings.json`, `~/.zshrc`, `~/Library/Keychains/login.keychain-db`, the source repository and another worktree, listing `~` or `~/.ssh` (0 entries), writing `~/x` or `/tmp/x`, and running `/bin/ls` all failed with `Operation not permitted`; reading `/etc/hosts` and writing the tree and the profile worked |
+| Print-mode soft denial | A tool call outside the workspace that no deny rule names makes AGY ask; print mode soft-denies it and ends the whole turn (bridge exit 15, `permission`). Two jobs ended this way when AGY's research subagent read `<job>/meta.json` and `<job>/.git/HEAD`; `jobs resume` then finished the first job. Deny rules turn such calls into a visible error (a deny rule beats an allow rule, so the root cannot be denied); the bridge now names the job folder's entries and `.git/` above the tree, and the next fresh job verified on its first turn |
+| End to end | `jobs start --dry-run`, `jobs start --profile ... --check '["python3","-m","unittest","discover","-s","tests"]'`, baseline check (exit 0), one AGY turn (`gemini-3.8-flash-medium`), offline check (exit 0), phase `verified` with the `check inputs changed` warning for the edited test, `jobs patch --raw`, `jobs apply --sha256` (phase `applied`), tests pass in the checkout |
 
 ## Implementation verification
 
 Offline tests exercise manifest creation, file edits, check retries, job cancellation and resume, and exact patch
-application. They simulate the AGY turn. The job inventory is a local filesystem read and works without AGY. Run
-`doctor --implementation --profile <absolute path>` to test AGY version and Bubblewrap startup without a model call.
+application. They simulate the AGY turn. `tests/test_implement_macos.py` also runs real negative probes against the
+macOS policy on darwin. The job inventory is a local filesystem read and works without AGY. Run
+`doctor --implementation --profile <absolute path>` to test AGY version and sandbox startup without a model call.
 An authenticated edit and resume with real AGY on a Linux host with working Bubblewrap user namespaces remains to be
 measured. To record the AGY version, actual file changes, check result, and resume behavior, use the
 [implementation acceptance test](MANUAL_TEST.md#14-check-implementation-on-linux).
