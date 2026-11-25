@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1836" viewBox="0 0 1200 1836" role="img" aria-labelledby="title description">
   <title id="title">agy-bridge workflow for Claude Code</title>
-  <desc id="description">Inspect the selected files, confirm the manifest and pass the permission prompt before anything is sent to Google. Delegate returns an untrusted read-only answer that you check and record a verdict on; the queue runs read-only jobs in order and can be watched or cancelled. Implement edits an isolated copy on Linux with Bubblewrap 0.8.0 or later, can rerun offline tests and resume, and exports a patch for explicit application. Secrets, links, binaries and invisible Unicode are never sent. Graders run model-written code only inside an OS sandbox. Jobs list and ps show active work.</desc>
+  <desc id="description">Inspect the selected files, confirm the manifest and pass the permission prompt before anything is sent to Google. Delegate returns an untrusted read-only answer that you check and record a verdict on; the queue runs read-only jobs in order and can be watched or cancelled. Delegate runs locally or, with --remote-agent, on a Google cloud agent that gets the checked files inside the prompt. Implement edits an isolated copy on Linux with Bubblewrap 0.8.0 or later or on macOS with sandbox-exec, can rerun offline tests and resume, and exports a patch for explicit application. Secrets, links, binaries and invisible Unicode are never sent. Graders run model-written code only inside an OS sandbox. Jobs list and ps show active work.</desc>
   <defs>
     <marker id="down" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0 0 10 5 0 10Z" fill="#64748b"/>
@@ -67,7 +67,7 @@
     </g>
     <g font-size="18" fill="#334155">
       <text x="97" y="708">The bridge copies them to a temporary folder.</text>
-      <text x="97" y="824">The read-only job returns a text answer.</text>
+      <text x="97" y="824">Locally, or in Google's cloud with --remote-agent.</text>
       <text x="97" y="940">Untrusted text: check quotes and the event log.</text>
       <text x="97" y="1056">verdict pass, fixes or reject, with evidence.</text>
       <text x="664" y="708">Submission returns a job ID.</text>
@@ -85,9 +85,9 @@
 
     <rect x="643" y="1106" width="467" height="38" rx="7" fill="#183e37"/>
     <text x="657" y="1131" font-family="DejaVu Sans Mono, monospace" font-size="16" fill="#f2fffb">jobs apply &lt;job&gt; --sha256 &lt;hash&gt;</text>
-    <text x="643" y="1176" font-size="16" fill="#475569">Linux · Bubblewrap 0.8.0+ · AGY 1.5.16+ (major version 1)</text>
-    <text x="643" y="1204" font-size="16" fill="#9a3412">The agent shares the host network:</text>
-    <text x="643" y="1228" font-size="16" fill="#9a3412">run it in a VM or container.</text>
+    <text x="643" y="1176" font-size="16" fill="#475569">Linux: Bubblewrap 0.8.0+ · macOS: sandbox-exec</text>
+    <text x="643" y="1200" font-size="16" fill="#475569">AGY 1.5.16+ (major version 1), dedicated profile</text>
+    <text x="643" y="1228" font-size="16" fill="#9a3412">Shares the host network: use a VM or container.</text>
 
     <rect x="46" y="1310" width="541" height="170" rx="18" fill="#fff" stroke="#e7b9b9" stroke-width="2"/>
     <text x="76" y="1350" font-size="22" font-weight="700" fill="#7f1d1d">Never sent (refused or skipped)</text>
