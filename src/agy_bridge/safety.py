@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import contextlib
 import os
+import secrets
 import stat
+import time
 
 from . import config, denylist, stage
 
@@ -66,12 +68,69 @@ def write(root, rel, text):
         fd = os.open(os.path.basename(rel), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                      0o600, dir_fd=parent)
         try:
-            view = memoryview(text.encode('utf-8'))
-            while view:
-                n = os.write(fd, view)
-                if not n:
-                    raise OSError('short write')
-                view = view[n:]
+            _write_all(fd, text.encode('utf-8'))
             os.fsync(fd)
         finally:
             os.close(fd)
+
+
+TEMP_PREFIX = '.agy-tmp-'
+
+
+def _write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        n = os.write(fd, view)
+        if not n:
+            raise OSError('short write')
+        view = view[n:]
+
+
+def publish(root, rel, text):
+    """Create rel atomically: write a private temp file, fsync, link it to the final name (never replacing one).
+
+    Readers see either no file or the complete one. FileExistsError when rel already exists.
+    """
+    rel = relative(rel)
+    name = os.path.basename(rel)
+    with directory(os.path.join(root, os.path.dirname(rel)), create=True) as parent:
+        temp = TEMP_PREFIX + name + '-' + secrets.token_hex(8)
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        try:
+            try:
+                _write_all(fd, text.encode('utf-8'))
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.link(temp, name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
+        finally:
+            try:
+                os.unlink(temp, dir_fd=parent)
+            except FileNotFoundError:
+                pass
+        os.fsync(parent)
+
+
+def sweep_temp(root, rel, max_age=3600):
+    """Remove this user's leftover publish temp files; return how many.
+
+    A temp file with a second link was already published (the writer stopped before unlinking it) and goes now;
+    an unpublished one goes once it is older than max_age seconds.
+    """
+    removed = 0
+    try:
+        with directory(os.path.join(root, rel)) as parent:
+            for entry in os.listdir(parent):
+                if not entry.startswith(TEMP_PREFIX):
+                    continue
+                try:
+                    info = os.stat(entry, dir_fd=parent, follow_symlinks=False)
+                    if (stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and
+                            (info.st_nlink > 1 or time.time() - info.st_mtime > max_age)):
+                        os.unlink(entry, dir_fd=parent)
+                        removed += 1
+                except FileNotFoundError:
+                    continue
+    except FileNotFoundError:
+        pass
+    return removed

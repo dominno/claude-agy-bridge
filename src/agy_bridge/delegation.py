@@ -181,10 +181,15 @@ def execute(request: DelegationRequest) -> DelegationResult:
                     sent = True
                 result = runner.run_agy(argv, st.path, env, timeout, request.max_out_bytes, on_started=mark_sent)
         if not dry:
-            answer = report.clean_answer(result.out, preserve_lines=request.cite)
+            answer, removed = report.clean_counted(result.out, preserve_lines=request.cite)
             code = report.classify(result, answer.strip())
             if request.cite:
                 checked = citations.check(answer, prepared.entries)
+                if removed:
+                    # A note line would count as an unverified citation line; report it beside the answer.
+                    diagnostics.append("agy-bridge: " + report.INVISIBLE_NOTE % removed + "\n")
+            else:
+                answer = report.with_note(answer, removed)
             if code != config.EXIT_OK:
                 fail(report.FAILURE_TEXT[code])
             else:

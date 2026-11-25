@@ -44,7 +44,10 @@ if '--conversation' in args:
 else:
     file.write_text('result = 1\\n')
     if 'test interrupted edit' in args[-1]:
-        time.sleep(30)
+        # Conversation id and edit are done: signal readiness, then wait until the bridge kills us.
+        Path({str(tmp_path / 'agy-ready')!r}).write_text('ready')
+        while True:
+            time.sleep(1)
 print(json.dumps({{'event':'result', 'result':{{'conversation_id':{CONVERSATION!r}, 'status':'SUCCESS'}}}}), flush=True)
 ''')
     fake.chmod(0o700)
@@ -99,7 +102,10 @@ def test_cli_checks_exact_candidate_and_applies_only_reviewed_hash(project, caps
 
 def test_timeout_preserves_changed_files_and_resumes_conversation(project):
     repo, src, profile, jobs = project
-    assert _submit(repo, profile, '--turn-timeout', '1s', task='test interrupted edit') == config.EXIT_TIMEOUT
+    # The fake agent edits, writes a ready file and then sleeps until killed, so a 5 s turn limit always expires
+    # after the edit, however slow the machine is to start it.
+    assert _submit(repo, profile, '--turn-timeout', '5s', task='test interrupted edit') == config.EXIT_TIMEOUT
+    assert (jobs.parent / 'agy-ready').read_text() == 'ready'
     job = _only_job(jobs)
     state = implement._status(job)
     assert state['conversation_id'] == CONVERSATION
@@ -156,3 +162,53 @@ def test_detached_worker_handoff_handles_failure(project, capsys, monkeypatch):
         time.sleep(0.02)
     assert status['phase'] == 'failed'
     assert status['bridge_exit'] == config.EXIT_AGY_MISSING
+
+
+class _FakeTerminal:
+    def __init__(self, tty):
+        import io
+        self.buffer = io.BytesIO()
+        self._tty = tty
+
+    def isatty(self):
+        return self._tty
+
+    def write(self, text):
+        self.buffer.write(text.encode())
+
+    def flush(self):
+        pass
+
+
+@pytest.mark.parametrize('tty, raw', [(True, False), (True, True), (False, False)])
+def test_patch_is_escaped_only_for_a_terminal(monkeypatch, tty, raw):
+    from agy_bridge import implement as module
+    from agy_bridge import jobstore as store
+    patch = b'+\x1b]0;owned\x07 \xe2\x80\xae\r\n'
+    monkeypatch.setattr(store, 'job_path', lambda job: job)
+    monkeypatch.setattr(store, 'load', lambda job: {})
+    monkeypatch.setattr(module, '_read_patch', lambda job, state: patch)
+    fake = _FakeTerminal(tty)
+    monkeypatch.setattr(module.sys, 'stdout', fake)
+    assert main(['implement-patch', 'job', *(['--raw'] if raw else [])]) == 0
+    if tty and not raw:
+        assert fake.buffer.getvalue() == b'+\\x1b]0;owned\\x07 \\u{202e}\r\n'
+    elif raw:
+        assert fake.buffer.getvalue() == patch
+    else:
+        # A pipe keeps ESC bytes but marks format characters such as the bidi override.
+        assert fake.buffer.getvalue() == b'+\x1b]0;owned\x07 \\u{202e}\r\n'
+
+
+@pytest.mark.parametrize('tty', [True, False])
+def test_patch_shows_line_separator_as_a_marker(monkeypatch, tty):
+    from agy_bridge import implement as module
+    from agy_bridge import jobstore as store
+    patch = '+const s = "a\u2028b";\n'.encode()
+    monkeypatch.setattr(store, 'job_path', lambda job: job)
+    monkeypatch.setattr(store, 'load', lambda job: {})
+    monkeypatch.setattr(module, '_read_patch', lambda job, state: patch)
+    fake = _FakeTerminal(tty)
+    monkeypatch.setattr(module.sys, 'stdout', fake)
+    assert main(['implement-patch', 'job']) == 0
+    assert fake.buffer.getvalue() == b'+const s = "a\\u{2028}b";\n'

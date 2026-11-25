@@ -1,7 +1,7 @@
 # Manual test with the real Antigravity CLI
 
 Use this to check `agy-bridge` against a real `agy`, for example after a new `agy` version. The test suite only meets a
-fake one. The goal is to answer the questions in `COMPAT.md` (C1–C16) and to confirm, with the real thing, that the
+fake one. The goal is to answer the questions in `COMPAT.md` (C1–C17) and to confirm, with the real thing, that the
 safety rules hold.
 
 Sections 0–13 cover read-only delegation. For the Linux edit worker, start at
@@ -178,9 +178,13 @@ claude --plugin-dir /tmp/agy-bridge-review
 1. `/agy:doctor` — expect the same checks as section 4.
 2. `/agy:dry-run src/calc.py -- explain what calc.py does` — expect the manifest and no delegation.
 3. `/agy:delegate explain what calc.py does in two sentences, files: src/calc.py` — Claude should run the dry run
-   first, show the manifest, then delegate, and call the answer untrusted.
+   first, show the manifest and STOP to ask you to confirm that file set. Only after you confirm does it run the
+   real `delegate`, which shows a Claude Code permission prompt (it is not pre-approved). Expect the answer to be
+   called untrusted.
 4. Ask Claude something that should NOT use the plugin (for example "rename a variable in calc.py") and watch that it
-   does not delegate by itself: the plugin has no hook and no proactive agent.
+   does not delegate by itself: the plugin has no hook and no proactive agent, and `/agy:delegate`, `/agy:queue` and
+   `/agy:implement` set `disable-model-invocation: true`. Ask Claude to "delegate this to agy" without typing the
+   slash command and check that it cannot start `/agy:delegate` on its own.
 5. Check `/plugin` lists `agy` with no hooks, and note anything that asked for a permission.
 
 ## 11. Stop and report (do not continue past any of these)
@@ -224,8 +228,9 @@ are done (System Settings → Users & Groups, "Delete the home folder"). As your
 
 ## 14. Check implementation on Linux
 
-Use a disposable Linux user or VM, Git, Python, AGY CLI 1.5.16 or later in major version 1, and Bubblewrap with
-unprivileged user namespaces. All files in this fixture are synthetic. The example uses `GEMINI_API_KEY` from your
+Use a disposable Linux user or VM, Git, Python, AGY CLI 1.5.16 or later in major version 1, and Bubblewrap 0.8.0 or
+later (`bwrap --version`; Ubuntu 22.04 ships 0.6.x, Debian 12+/Ubuntu 24.04+ qualify) with unprivileged user
+namespaces. All files in this fixture are synthetic. The example uses `GEMINI_API_KEY` from your
 environment. For another supported credential setup, see the [implementation guide](IMPLEMENT.md).
 
 ### Create a fixture and preview it
@@ -286,7 +291,7 @@ A failed final check or no changes is a failed acceptance run.
 ```sh
 git -C "$repo" diff --exit-code
 patch=$(mktemp)
-"$bridge" implement-patch "$job_id" > "$patch"
+"$bridge" implement-patch "$job_id" --raw > "$patch"
 cat "$patch"
 ```
 

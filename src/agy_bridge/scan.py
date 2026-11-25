@@ -90,6 +90,58 @@ SECRET_RULES: Sequence[SecretRule] = (
                _KEY + _SUFFIX + _AFTER + r"[:=][ \t]{0,20}(['\"])(?![$\{])[^'\"\s]{8,128}\1",
                'password = "Tr0ub4dor&3!horse"', 'password = "${DB_PASSWORD}" and token = "two words here"',
                ignorecase=True),
+    SecretRule("putty-private-key", r"PuTTY-User-Key-File-[0-9]{1,3}:",
+               "PuTTY-User-Key-File-3: ssh-ed25519", "PuTTY user guide and PuTTY-User-Key-File- docs"),
+    SecretRule("azure-account-key", r"AccountKey=[A-Za-z0-9+/=]{20,512}",
+               "DefaultEndpointsProtocol=https;AccountKey=" + "a" * 40 + "==", "AccountKey=<your key>"),
+    SecretRule("vault-token", r"(?<![A-Za-z0-9])hvs\.[A-Za-z0-9_\-]{20,512}", "hvs." + "a" * 24,
+               "hvs.short and thvs." + "a" * 24),
+    SecretRule("digitalocean-token", r"(?<![A-Za-z0-9])dop_v1_[a-f0-9]{64}", "dop_v1_" + "0a" * 32,
+               "dop_v1_short"),
+    SecretRule("pypi-token", r"(?<![A-Za-z0-9])pypi-AgE[A-Za-z0-9_\-]{50,512}", "pypi-AgE" + "a" * 60,
+               "pypi-AgEshort and pypi-package"),
+    SecretRule("shopify-token", r"(?<![A-Za-z0-9])shp(?:at|ss|ca|pa)_[a-fA-F0-9]{32}", "shpat_" + "0a" * 16,
+               "shpat_short and shop_" + "0a" * 16),
+    SecretRule("linear-api-key", r"(?<![A-Za-z0-9])lin_api_[A-Za-z0-9]{40}", "lin_api_" + "a" * 40,
+               "lin_api_short"),
+    SecretRule("groq-key", r"(?<![A-Za-z0-9])gsk_[A-Za-z0-9]{40,512}", "gsk_" + "a" * 48, "gsk_short and task_" + "a" * 48),
+    SecretRule("xai-key", r"(?<![A-Za-z0-9])xai-[A-Za-z0-9]{40,512}", "xai-" + "a" * 60, "xai-short and taxai-" + "a" * 60),
+    # Short passwords: a name ending in PASSWORD/PASSWD/PWD/_PASS, an 8+ character value with a digit, in plain
+    # assignment form or as a quoted PHP define('DB_PASSWORD', '...'). Values starting with $ or < are placeholders.
+    # A quoted value must end at its closing quote. An unquoted value must end at whitespace, ';', ',' or end of
+    # input, and must not start like a dotted or snake_case identifier (old_password2, hashlib.sha256(...)), so
+    # ordinary code in auth modules is not mistaken for a literal.
+    SecretRule("assigned-short-password",
+               r"(?<![A-Za-z0-9_])[A-Za-z0-9_]{0,64}(?:password|passwd|pwd|_pass)"
+               r"(?:['\"]?[ \t]{0,20}[:=]|['\"][ \t]{0,20},)[ \t]{0,20}"
+               r"(?:['\"](?=[^\s'\"]{0,127}[0-9])[^\s'\"$<][^\s'\"]{7,127}['\"]"
+               r"|(?![A-Za-z_][A-Za-z0-9_]{0,127}[._])(?=[^\s'\"()]{0,127}[0-9])[^\s'\"()$<][^\s'\"()]{7,127}"
+               r"(?=[\s;,]|$))",
+               "DB_PASSWORD=hunter22x",
+               "DB_PASSWORD=changeme and pwd = os.getcwd() and DB_PASS=${DB_PASS1234} and "
+               "new_password = old_password2",
+               ignorecase=True),
+    # Keys assigned to *_KEY-style names (DB_ENCRYPTION_KEY, privateKey, "signing-key", :app_key =>). The name must
+    # end at "key"; the value is 16+ token characters with at least one digit and one letter, so
+    # session_key = request.session.session_key and KEY_NAME = "primary" stay clean.
+    SecretRule("assigned-named-key",
+               r"(?:private|signing|encryption|master|access|app|session|client|jwt|hmac|crypt)[_\-]?key"
+               r"(?![A-Za-z0-9_\-])['\"\]]{0,3}[ \t]{0,20}(?:=>|[:=])[ \t]{0,20}['\"]?"
+               r"(?=[A-Za-z0-9+/=_\-:.]{0,511}[0-9])(?=[A-Za-z0-9+/=_\-:.]{0,511}[A-Za-z])"
+               r"[A-Za-z0-9+/=_\-:.]{16,512}",
+               'SIGNING_KEY = "9f8e7d6c5b4a39281706f5e4d3c2b1a0"',
+               'KEY_NAME = "primary" and public_key: ssh-ed25519 and signing_key = "short1" and '
+               'session_key = request.session.session_key',
+               ignorecase=True),
+    SecretRule("azure-shared-access-key", r"SharedAccessKey=[A-Za-z0-9+/=]{16,512}",
+               "Endpoint=sb://x.servicebus.windows.net/;SharedAccessKeyName=root;SharedAccessKey=" + "a1" * 22 + "=",
+               "SharedAccessKeyName=RootManageSharedAccessKey and SharedAccessKey=<key>"),
+    SecretRule("age-secret-key", r"AGE-SECRET-KEY-1[0-9A-Z]{58}", "AGE-SECRET-KEY-1" + "QZ" * 29,
+               "AGE-SECRET-KEY-1SHORT and age-secret-key docs"),
+    SecretRule("atlassian-api-token", r"(?<![A-Za-z0-9])ATATT[A-Za-z0-9_\-=]{20,512}", "ATATT3x" + "Ff0" * 40,
+               "ATATTshort and CATATT" + "a" * 30),
+    SecretRule("databricks-token", r"(?<![A-Za-z0-9])dapi[a-f0-9]{32}", "dapi" + "0a" * 16,
+               "dapi_short and rapid" + "0a" * 16),
     SecretRule("assigned-unquoted-special",
                _KEY + _SUFFIX + _AFTER + r"[:=][ \t]{1,20}(?=[A-Za-z0-9_\-+/=]{0,64}[&!@#%^*~?;,])"
                r"[A-Za-z0-9_\-+/=&!@#%^*~?;,]{10,128}",

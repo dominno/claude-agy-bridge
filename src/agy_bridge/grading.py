@@ -237,12 +237,16 @@ def extract_diff(text):
     return None
 
 
+_HIDDEN_HEADER=re.compile(r'(?:--- |\+\+\+ |\*\*\* |@@ |Index:|diff |[0-9]+(?:,[0-9]+)?[acdi]$|\.$|[sw]/)')
+
+
 def check_diff(text, root=None, allowed=None):
     # Accept ordinary unified text diffs only. No links, renames, copies or binary payloads.
     if re.search(r'^(?:GIT binary patch|Binary files|rename |copy |(?:new|old|deleted file|new file) mode 12|index .* 120000)',text,re.M):
         raise ValueError('binary, symlink and rename diffs are refused')
     paths=[]
     in_hunk=False
+    old_left=new_left=0
     for line in text.splitlines():
         if line.startswith(('--- ','+++ ')):
             path=line[4:].split('\t',1)[0]
@@ -252,9 +256,12 @@ def check_diff(text, root=None, allowed=None):
             paths.append(path)
             in_hunk=False
         elif line.startswith('@@ '):
-            if not paths or not re.match(r'^@@ -[0-9]+(?:,[0-9]+)? \+[0-9]+(?:,[0-9]+)? @@',line):
+            counts=re.match(r'^@@ -[0-9]+(?:,([0-9]+))? \+[0-9]+(?:,([0-9]+))? @@',line)
+            if not paths or not counts:
                 raise ValueError('invalid unified hunk header')
             in_hunk=True
+            old_left=int(counts[1]) if counts[1] is not None else 1
+            new_left=int(counts[2]) if counts[2] is not None else 1
         elif line.startswith('Index: '):
             path = line[len('Index: '):].strip()
             target(path, root)
@@ -274,6 +281,19 @@ def check_diff(text, root=None, allowed=None):
         elif not line or re.fullmatch(r'=+',line):
             continue
         elif in_hunk and (line.startswith((' ', '+', '-')) or line == r'\ No newline at end of file'):
+            if line.startswith(' '):
+                old_left-=1; new_left-=1
+            elif line.startswith('-'):
+                old_left-=1
+            elif line.startswith('+'):
+                new_left-=1
+            if old_left<0 or new_left<0:
+                # Beyond the declared counts patch looks for the next file header and
+                # strips leading whitespace (indented diffs), while git apply --recount
+                # keeps reading the hunk. Tolerate miscounted hunks, but never a line
+                # that either parser could read as a header or an ed command.
+                if _HIDDEN_HEADER.match(line[1:].lstrip()):
+                    raise ValueError('indented diff header or ed command after a hunk is refused')
             continue
         else:
             # patch also understands ed scripts. Never let arbitrary text outside

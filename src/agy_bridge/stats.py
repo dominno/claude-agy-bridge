@@ -11,6 +11,9 @@ import statistics
 from . import events, safety
 
 
+HEADER_LIMIT=64*1024
+
+
 def read_headers(root, folder):
     rows=[]
     try:
@@ -19,8 +22,10 @@ def read_headers(root, folder):
             from .stage import _read_regular
             for name in names:
                 text=_read_regular(fd,name,8*1024*1024).decode('utf-8')
-                head=re.split(r'^(?:#{2,3} |----\s*$)',text,maxsplit=1,flags=re.M)[0]
-                model=re.search(r'^model:\s*(\S+)',head,re.M) or re.search(r'agy-bridge \(([^,]+), read-only\)',head)
+                # Results can be repository-supplied: bound the header region and keep
+                # every pattern line-local so a crafted file cannot cause quadratic scans.
+                head=re.split(r'^(?:#{2,3} |----\s*$)',text[:HEADER_LIMIT],maxsplit=1,flags=re.M)[0]
+                model=re.search(r'^model:\s*(\S+)',head,re.M) or re.search(r'agy-bridge \(([^,\n]{1,64}), read-only\)',head)
                 size=re.search(r'(?:^|\| )bytes:\s*(\d+)\s*(?:$|\|)',head,re.M)
                 seconds=re.search(r'(?:^|\| )seconds:\s*([\d.]+)\s*(?:$|\|)',head,re.M)
                 if model and size and seconds:

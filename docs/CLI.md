@@ -2,13 +2,19 @@
 
 ```
 bin/agy-bridge delegate --repo <root> --file <path>... [--glob <pattern>...] [--model <name>]
-                        [--timeout 5m] [--max-bytes N] [--out <file>]
-                        [--cite [--require-verified]] [--allow-fragment-file <path>] -- "<task>"
-bin/agy-bridge dry-run  (same arguments; prints the manifest and the agy command, sends nothing)
+                        [--timeout 5m] [--max-bytes N] [--max-file-bytes N] [--max-out-bytes N] [--out <file>]
+                        [--cite [--require-verified]] [--allow-fragment-file <path>]
+                        [--allow-non-git-root] [--dry-run] -- "<task>"
+bin/agy-bridge dry-run  (same arguments without --dry-run; prints the manifest and the agy command, sends nothing)
 bin/agy-bridge doctor   [--repo <root>] [--offline]
 bin/agy-bridge doctor --implementation --profile <absolute path> [--repo <root>]
 bin/agy-bridge events   [--repo <root>] [--tail N]
 ```
+
+`dry-run` reads and checks the files exactly like `delegate`, writes them to a temporary folder (mode 0700, removed
+before it exits), prints the manifest and the `agy` command line, and runs `agy --version` with the five-name
+environment in an empty folder. That is the only program a dry run starts; delegation never runs git. No file
+contents and no task text go to `agy`. To have a diff reviewed, pass the changed source files with `--file`.
 
 Queue commands are in [QUEUE.md](QUEUE.md). See [GRADING.md](GRADING.md) for `verdict`, `verdicts`, `grade-mutants`,
 `apply-diff` and `stats`. `bin/agy-bridge <command> --help` lists the options. If you installed the package, replace
@@ -17,12 +23,12 @@ Queue commands are in [QUEUE.md](QUEUE.md). See [GRADING.md](GRADING.md) for `ve
 ## Job inventory
 
 ```text
-agy-bridge jobs
+agy-bridge jobs [--active] [-C ROOT] [--queue-dir PATH] [--allow-non-git-root] [--json]
 agy-bridge jobs list [--active] [-C ROOT] [--queue-dir PATH] [--allow-non-git-root] [--json]
 agy-bridge ps [--all] [-C ROOT] [--queue-dir PATH] [--allow-non-git-root] [--json]
 ```
 
-`jobs` and `jobs list` read existing local metadata without starting AGY, creating storage, or opening queued
+`jobs` with no subcommand is the same as `jobs list`. Both read existing local metadata without starting AGY, creating storage, or opening queued
 delegation prompts. `ps` shows live work by default and `ps --all` includes job history. `-C` and `--repo` select a
 project and include its delegation queue. Use `--queue-dir` for a custom queue. Use the explicit
 `--allow-non-git-root` option to inspect a legacy delegation queue rooted in a non-Git project.
@@ -41,8 +47,12 @@ and sets the boolean flag. The `queue_dir`, `created_at`, `updated_at`, `started
 then by most recently updated. Warnings describe entries the inventory could not read safely.
 
 An empty inventory is successful. The text output shows `No jobs.` or `No active jobs.` and sends warnings to stderr.
-Use `jobs show <job-id>` for detailed implementation state. `status` and `queue status` retain their queue
-report format. [Queue commands](QUEUE.md).
+Without `-C` no delegation queue is searched, so an empty listing says `No implementation jobs. Delegation queues are
+listed per repository: agy-bridge jobs list -C <repo>` (`ps`: `No active implementation jobs. ... agy-bridge ps -C
+<repo>`), and when the current folder is inside a Git checkout whose `.agy-bridge/queue` holds pending jobs, it adds
+`NOTE <n> queue job(s) pending in <repo>; use -C` (a read-only listing). With `--json` both lines are added to
+`warnings`. Use `jobs show <job-id>` for detailed implementation state. `status` and `queue status` retain their
+queue report format, and list up to 20 pending job names after `pending: N` (`pending jobs: a, b`). [Queue commands](QUEUE.md).
 
 Every command with `--repo` also accepts `-C`. File selection in `delegate`, `dry-run`, and `jobs start` accepts
 `-f` as a shortcut for `--file`.
@@ -59,6 +69,8 @@ agy-bridge jobs patch <job-id>
 agy-bridge jobs cancel <job-id>
 agy-bridge jobs resume <job-id> [--foreground]
 agy-bridge jobs apply <job-id> --sha256 <reviewed patch hash>
+agy-bridge jobs remove <job-id> [--force] [--dry-run]
+agy-bridge jobs prune [--older-than 7d] [--force] [--dry-run]
 ```
 
 `implement` and the `implement-*` names remain CLI entry points for the same operations. `jobs status` is an alias
@@ -84,17 +96,24 @@ invocation. Resume starts a new invocation of the same job. [Setup and examples]
 | `jobs start`, `jobs resume` | Background start returns a JSON job ID and `queued`. `--foreground` waits and returns the worker exit code. |
 | `jobs show` | JSON phase, `worker_active`, `cancel_requested`, Git base, attempt, available timestamps, recorded check exit codes, change list, and patch hash. |
 | `jobs cancel` | Requests cancellation for the current invocation and returns `cancel_requested`. Check status for the outcome. |
-| `jobs patch` | Writes the saved unified diff to stdout after checking its hash. Partial patches can be inspected once saved. |
-| `ready`, `verified` | A patch is available for review. `verified` also records a successful configured check. |
+| `jobs patch` | Writes the saved unified diff to stdout after checking its hash. Partial patches can be inspected once saved. A terminal sees controls escaped; a pipe or file sees invisible Unicode as `\u{XXXX}` markers. `--raw` writes the exact bytes to hash and apply. |
+| `ready`, `verified` | A patch is available for review. `verified` also records a successful configured check and `check_inputs_changed`; when that list is not empty, `jobs show` and `jobs list` print `WARN check inputs changed by the agent: ...`. |
 | `checks_failed`, `no_changes` | The check failed after retries, or there were no file changes. |
 | `canceled`, `timed_out`, `quota`, `auth_required`, `interrupted`, `failed` | The worker stopped. Resume can continue from the retained workspace unless subprocess cleanup was unconfirmed. |
 | `applying` | Apply started. Use the same job ID and reviewed SHA-256 to resume an interrupted apply. |
 | `jobs apply`, `applied` | Checks the approved hash and file contents, then writes the reviewed patch to the working tree. |
+| `jobs remove` | Deletes one job directory and prints JSON with the reclaimed `bytes`. `applied`, `canceled`, `failed` and `no_changes` jobs go without `--force`; `ready`/`verified` (unapplied) and unfinished jobs need `--force`; a job with an active worker is always refused. |
+| `jobs prune` | Removes such finished jobs whose last update is older than `--older-than` (default `7d`; `s`, `m`, `h`, `d` units), plus `.prepare-*`/`.pending-*` staging leftovers older than 1 hour, and prints a JSON report (`removed`, `kept`, `leftovers`, `bytes`). `--dry-run` lists without deleting. |
 
 Background commands report submission success independently of the eventual job outcome. For a finished job,
 `jobs show` shows `bridge_exit` when the worker recorded one. `check_exit` is the check's own exit code.
 Application writes the source working tree. Use Git to stage the resulting files. Job state and patch files live
-under `~/.agy-bridge/implement/`.
+under `~/.agy-bridge/implement/`. Removal walks each job directory relative to open directory handles, unlinks
+symbolic links without following them and refuses directories not owned by the current user.
+
+An unknown but well-formed job ID exits 1 with `no implementation job <id>; list jobs with: agy-bridge jobs list`;
+a malformed ID names the accepted pattern (32 lowercase hex characters) and, when the value looks like a queue job
+name, adds `queue job names are shown by agy-bridge jobs list -C <repo>`.
 
 ## Exit codes
 
@@ -102,9 +121,9 @@ under `~/.agy-bridge/implement/`.
 |---|---|
 | 0 | ok |
 | 1 | usage |
-| 2 | `agy` failed |
+| 2 | `agy` failed; also `queue watch --detach` when the watcher exits or does not take the queue lock in time |
 | 3 | empty answer |
-| 4 | refused by a rule |
+| 4 | refused by a rule, an unsafe path, or a queue lock held by another runner |
 | 10 | quota |
 | 11 | auth |
 | 12 | timeout |

@@ -178,7 +178,8 @@ def test_out_of_range_watcher_timestamp_is_unavailable(tmp_path):
 
     with paths.lock('run'):
         watcher = repository / paths.queue / 'watcher.pid'
-        watcher.write_text(json.dumps({'pid': 42, 'mode': 'run', 'job': 'review', 'started': 10**1000}))
+        watcher.write_text(json.dumps({'pid': 42, 'mode': 'run', 'job': 'review', 'started': 10**1000,
+                                       'version': queue.__version__, 'code_root': queue.CODE_ROOT}))
 
         view, warnings = queue.list_jobs(queue.QueueLocation(str(repository)))
         assert [(row['phase'], row['started_at']) for row in view] == [('running', None)]
@@ -205,3 +206,78 @@ def test_bare_jobs_and_ps_select_expected_views(tmp_path, monkeypatch, capsys):
 
     assert _run_command('ps', '--all', '-C', str(repository), '--json') == 0
     assert [row['job_id'] for row in json.loads(capsys.readouterr().out)['jobs']] == ['1' * 32, '2' * 32]
+
+
+def _empty_store(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, 'bridge_home', lambda: str(tmp_path / 'bridge-home'))
+    monkeypatch.setattr(jobstore, 'iter_status', lambda: iter(()))
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+
+
+def test_list_without_repo_says_queues_were_not_searched(tmp_path, monkeypatch, capsys):
+    _empty_store(tmp_path, monkeypatch)
+    assert _run() == 0
+    assert capsys.readouterr().out == ('No implementation jobs. Delegation queues are listed per repository: '
+                                       'agy-bridge jobs list -C <repo>\n')
+    assert _run_command('ps') == 0
+    assert capsys.readouterr().out == ('No active implementation jobs. Delegation queues are listed per repository: '
+                                       'agy-bridge ps -C <repo>\n')
+    assert _run('--json') == 0
+    assert json.loads(capsys.readouterr().out)['warnings'] == [
+        'No implementation jobs. Delegation queues are listed per repository: agy-bridge jobs list -C <repo>']
+
+
+def test_list_without_repo_notes_pending_queue_jobs_in_the_cwd_repository(tmp_path, monkeypatch, capsys):
+    _empty_store(tmp_path, monkeypatch)
+    repository = _repo(tmp_path / 'my repo')
+    pending = repository / '.agy-bridge' / 'queue'
+    pending.mkdir(parents=True)
+    (pending / 'one.job').write_text('{}')
+    (pending / 'two.job').write_text('{}')
+    (pending / 'done').mkdir()
+    (pending / 'done' / 'old.job').write_text('{}')
+    (repository / 'sub').mkdir()
+    monkeypatch.chdir(repository / 'sub')
+    assert _run() == 0
+    out = capsys.readouterr().out
+    assert "NOTE 2 queue job(s) pending in %s; use -C (agy-bridge jobs list -C '%s')" % (repository, repository) in out
+    assert not (repository / 'sub' / '.agy-bridge').exists()
+    assert _run('--json') == 0
+    assert any(w.startswith('NOTE 2 queue job(s) pending') for w in json.loads(capsys.readouterr().out)['warnings'])
+    # With -C the queue is listed and no note is added.
+    assert _run('-C', str(repository)) == 0
+    assert 'NOTE' not in capsys.readouterr().out
+
+
+def test_inventory_options_before_list_are_kept(tmp_path, monkeypatch, capsys):
+    _empty_store(tmp_path, monkeypatch)
+    repository = _repo(tmp_path / 'repo')
+    pending = repository / '.agy-bridge' / 'queue'
+    pending.mkdir(parents=True)
+    (pending / 'x1.job').write_text('{}')
+    expected = None
+    for arguments in (('jobs', '-C', str(repository)), ('jobs', 'list', '-C', str(repository)),
+                      ('jobs', '-C', str(repository), 'list')):
+        assert _run_command(*arguments) == 0
+        out = capsys.readouterr().out
+        assert 'x1' in out and 'No implementation jobs. Delegation queues' not in out, (arguments, out)
+        expected = out if expected is None else expected
+        assert out == expected
+    assert _run_command('jobs', '--json', '-C', str(repository), 'list') == 0
+    assert json.loads(capsys.readouterr().out)['schema_version'] == jobs.SCHEMA_VERSION
+    # A later option still wins over the same option given before `list`.
+    assert _run_command('jobs', '-C', str(tmp_path / 'outside'), 'list', '-C', str(repository)) == 0
+    assert 'x1' in capsys.readouterr().out
+
+
+def test_malformed_implement_id_that_looks_like_a_queue_name_gets_a_hint():
+    import pytest
+    with pytest.raises(config.UsageError) as info:
+        jobstore.job_path('review-auth')
+    assert str(info.value).endswith('list jobs with: agy-bridge jobs list; queue job names are shown by '
+                                    'agy-bridge jobs list -C <repo>')
+    with pytest.raises(config.UsageError) as info:
+        jobstore.job_path('../bad')
+    assert 'queue job names' not in str(info.value)

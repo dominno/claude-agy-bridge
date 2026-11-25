@@ -7,6 +7,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import posixpath
+import re
 import stat
 import subprocess
 import sys
@@ -20,6 +22,7 @@ from .scan import scan_bytes
 ACTIVE = jobstore.ACTIVE
 MAX_PATCH = 12 * 1024 * 1024
 MAX_LOG_TAIL = 4000
+MAX_SCOPE_PATHS = 10
 _JOB_ACTIONS = (
     ('show', 'status', ('status',), 'show one implementation job'),
     ('cancel', 'cancel', (), 'request cancellation of an active job'),
@@ -54,6 +57,10 @@ def _job_arguments(parser, operation):
         parser.add_argument('--foreground', action='store_true')
     if operation == 'apply':
         parser.add_argument('--sha256', required=True, help='SHA-256 of the patch you reviewed')
+    if operation == 'patch':
+        parser.add_argument('--raw', action='store_true',
+                            help='write exact bytes (by default a terminal sees escapes, and a pipe or file '
+                                 'sees invisible Unicode as \\u{XXXX} markers)')
 
 
 def add_arguments(sub):
@@ -66,6 +73,59 @@ def add_job_actions(commands):
     _start_arguments(commands.add_parser('start', help='start a new implementation job', allow_abbrev=False))
     for name, operation, aliases, help_text in _JOB_ACTIONS:
         _job_arguments(commands.add_parser(name, aliases=aliases, help=help_text, allow_abbrev=False), operation)
+    remove = commands.add_parser('remove', help='delete one finished implementation job directory',
+                                 description='delete one implementation job directory; ready, verified and '
+                                             'unfinished jobs need --force, an active worker is always refused',
+                                 allow_abbrev=False)
+    remove.set_defaults(handler=maintain, implementation_operation='implement-remove')
+    remove.add_argument('job', metavar='JOB_ID')
+    remove.add_argument('--force', action='store_true', help='also remove a job whose patch was not applied')
+    remove.add_argument('--dry-run', action='store_true', help='report what would be removed; delete nothing')
+    prune = commands.add_parser('prune', help='delete old finished implementation jobs and stale leftovers',
+                                description='delete finished jobs (applied, canceled, failed, no_changes) older '
+                                            'than --older-than, and staging leftovers older than 1h',
+                                allow_abbrev=False)
+    prune.set_defaults(handler=maintain, implementation_operation='implement-prune')
+    prune.add_argument('--older-than', default='7d', metavar='AGE', help='minimum age, e.g. 12h or 7d (default 7d)')
+    prune.add_argument('--force', action='store_true', help='also remove old unfinished or unapplied jobs')
+    prune.add_argument('--dry-run', action='store_true', help='list what would be removed; delete nothing')
+
+
+_AGE = re.compile(r'([0-9]{1,7})([smhd]?)\Z')
+
+
+def _older_than(value):
+    match = _AGE.fullmatch(value.strip().lower())
+    seconds = int(match.group(1)) * {'': 1, 's': 1, 'm': 60, 'h': 3600, 'd': 86400}[match.group(2)] if match else 0
+    if not 0 <= seconds <= 3650 * 86400 or not match:
+        raise config.UsageError('--older-than must look like 3600, 90m, 12h or 7d (at most 3650d)')
+    return seconds
+
+
+def maintain(args):
+    """jobs remove / jobs prune: delete private job directories without following links."""
+    operation = 'jobs ' + args.implementation_operation[len('implement-'):]
+    try:
+        if args.implementation_operation == 'implement-prune':
+            result = jobstore.prune(_older_than(args.older_than), force=args.force, dry_run=args.dry_run)
+            print(json.dumps(result, ensure_ascii=True, indent=2))
+            return 0
+        try:
+            phase, size = jobstore.remove(args.job, force=args.force, dry_run=args.dry_run)
+        except FileNotFoundError:
+            sys.stderr.write('agy-bridge: no implementation job %s; list jobs with: agy-bridge jobs list\n' % args.job)
+            return config.EXIT_USAGE
+        print(json.dumps({'job_id': args.job, 'phase': phase, 'removed': not args.dry_run, 'dry_run': args.dry_run,
+                          'bytes': size}))
+        return 0
+    except (stage.Refused, OSError) as exc:
+        lines = stage.explain(exc, operation)
+        sys.stderr.write('agy-bridge: ' + lines[0] + '\n')
+        sys.stderr.writelines(line + '\n' for line in lines[1:])
+        return config.EXIT_REFUSED
+    except config.UsageError as exc:
+        sys.stderr.write('agy-bridge: ' + _tail(str(exc)) + '\n')
+        return config.EXIT_USAGE
 
 
 def _check_argv(value):
@@ -162,6 +222,54 @@ def _launch(job, foreground, initial=False):
         return 0
 
 
+# Files that configure or extend how a check runs: an agent that edits them can make a check pass without fixing
+# anything, so a 'verified' job that changed one is flagged for review.
+CHECK_INPUT_NAMES = frozenset({'conftest.py', 'pytest.ini', 'tox.ini', 'setup.cfg', 'pyproject.toml', 'noxfile.py',
+                               'setup.py', 'package.json', 'Makefile', 'GNUmakefile', 'makefile', 'justfile',
+                               'sitecustomize.py', 'usercustomize.py'})
+CHECK_INPUTS_WARNING = 'WARN check inputs changed by the agent: %s; review them before trusting verified'
+
+
+def _workspace_argument(value):
+    """The normalised workspace-relative path an argv element names, or None."""
+    if not isinstance(value, str) or not value:
+        return None
+    if value.startswith('-'):
+        _, separator, value = value.partition('=')
+        if not separator or not value:
+            return None
+    if value.startswith('/'):
+        return None
+    normal = posixpath.normpath(value)
+    if normal in ('.', '..') or normal.startswith('../'):
+        return None
+    return normal
+
+
+def check_inputs_changed(check, changed):
+    """Sorted changed paths that are inputs of the check: an argv path (argv[0] included) or a path under an argv
+    element naming a directory (`pytest tests` covers tests/test_x.py), a CHECK_INPUT_NAMES basename, a *.pth file
+    or a file under .github/workflows/. A bare `.` argument is not treated as a directory (it would match every
+    change)."""
+    named = {_workspace_argument(value) for value in (check or ())} - {None}
+    prefixes = tuple(item + '/' for item in named)
+    found = set()
+    for path in changed:
+        base = posixpath.basename(path)
+        if (path in named or (prefixes and path.startswith(prefixes)) or base in CHECK_INPUT_NAMES or
+                base.endswith('.pth') or path.startswith('.github/workflows/')):
+            found.add(path)
+    return sorted(found)
+
+
+def check_inputs_warning(state):
+    """The WARN line for a job whose patch changed its check's inputs, or None."""
+    paths = state.get('check_inputs_changed')
+    if not paths:
+        return None
+    return CHECK_INPUTS_WARNING % ', '.join(stage.printable(path) for path in paths)
+
+
 def _finish(job, state, phase, code, detail=None):
     state.update(phase=phase, bridge_exit=code)
     if detail:
@@ -177,9 +285,15 @@ def _validate_scope(state, paths):
         return
     original = {item['path'] for item in state['manifest']}
     folders = tuple(folder + '/' for folder in state['write_dirs'])
-    for path in paths:
-        if not (path.startswith(folders) if folders else path in original):
-            raise config.UsageError('candidate contains edits outside the approved paths')
+    outside = [path for path in paths if not (path.startswith(folders) if folders else path in original)]
+    if outside:
+        shown = ', '.join(stage.printable(path) for path in outside[:MAX_SCOPE_PATHS])
+        if len(outside) > MAX_SCOPE_PATHS:
+            shown += ' (+%d more)' % (len(outside) - MAX_SCOPE_PATHS)
+        where = (', '.join(stage.printable(folder) for folder in state['write_dirs']) if folders
+                 else '(none: only the staged files may change)')
+        raise config.UsageError('candidate edits outside --write-dir %s: %s; rerun with a wider --write-dir or '
+                                'reject the job' % (where, shown))
 
 
 def _tail(text):
@@ -338,6 +452,10 @@ def _work(job):
                 break
         if state.get('check_exit'):
             return _finish(job, state, 'checks_failed', config.EXIT_INCOMPLETE, feedback)
+        if state['check']:
+            # The phase stays 'verified' for compatibility; readers see the WARN in jobs show and jobs list.
+            state['check_inputs_changed'] = check_inputs_changed(
+                state['check'], [path for _, path in state.get('changes', ())])
         return _finish(job, state, 'verified' if state['check'] else 'ready', 0)
     except KeyboardInterrupt:
         if work is not None:
@@ -391,8 +509,13 @@ def _apply_job(job, reviewed_hash):
         if fd is None:
             raise config.UsageError('wait for the active operation before applying this patch')
         state = jobstore.load(job)
-        if state['phase'] not in jobstore.APPLY_PHASES or reviewed_hash != state.get('patch_sha256'):
-            raise config.UsageError('applying requires the exact reviewed hash of a ready or verified patch')
+        if state['phase'] not in jobstore.APPLY_PHASES:
+            raise config.UsageError('job %s is %s; apply needs ready/verified (agy-bridge jobs show %s)'
+                                    % (job.name, state['phase'], job.name))
+        if reviewed_hash != state.get('patch_sha256'):
+            raise config.UsageError('--sha256 does not match the published patch (expected %s); review it with '
+                                    'agy-bridge jobs patch %s --raw > p.diff and hash it (sha256sum or '
+                                    'shasum -a 256)' % (state.get('patch_sha256'), job.name))
         patch = _read_patch(job, state)
         if state['phase'] == 'applied':
             print(json.dumps({'job_id': job.name, 'phase': 'applied'}))
@@ -425,7 +548,13 @@ def _apply_job(job, reviewed_hash):
         return 0
 
 
+_JOB_NAMES = {'implement': 'start', 'implement-status': 'show', **{
+    'implement-' + operation: name for name, operation, _aliases, _help in _JOB_ACTIONS}}
+
+
 def dispatch(args):
+    operation = 'jobs ' + _JOB_NAMES.get(
+        getattr(args, 'implementation_operation', getattr(args, 'command', None)), 'operation')
     try:
         command = getattr(args, 'implementation_operation', getattr(args, 'command', None))
         if command == 'implement':
@@ -433,7 +562,12 @@ def dispatch(args):
         if command not in {'implement-status', 'implement-cancel', 'implement-resume',
                             'implement-patch', 'implement-apply', '_implement-worker'}:
             raise config.UsageError('unknown implementation command')
-        job = jobstore.job_path(args.job)
+        try:
+            job = jobstore.job_path(args.job)
+        except FileNotFoundError:
+            # job_path accepted the ID, so it is 32 hex characters and safe to echo.
+            sys.stderr.write('agy-bridge: no implementation job %s; list jobs with: agy-bridge jobs list\n' % args.job)
+            return config.EXIT_USAGE
         if command == '_implement-worker':
             # Accept only the original lock inode inherited from the launcher.
             info = os.fstat(args.lock_fd)
@@ -447,7 +581,13 @@ def dispatch(args):
         if command == 'implement-resume':
             return _launch(job, args.foreground)
         if command == 'implement-status':
-            print(json.dumps(_status(job), ensure_ascii=True, indent=2))
+            row = _status(job)
+            warning = check_inputs_warning(row)
+            if warning:
+                row['warning'] = warning
+            print(json.dumps(row, ensure_ascii=True, indent=2))
+            if warning:
+                sys.stderr.write('agy-bridge: ' + warning + '\n')
             return 0
         if command == 'implement-cancel':
             jobstore.request_cancel(job)
@@ -455,11 +595,18 @@ def dispatch(args):
             return 0
         if command == 'implement-patch':
             sys.stdout.flush()
-            sys.stdout.buffer.write(_read_patch(job, jobstore.load(job)))
+            patch = _read_patch(job, jobstore.load(job))
+            if not getattr(args, 'raw', False):
+                # A terminal sees every control escaped; a pipe or file still gets invisible Unicode as \u{XXXX}
+                # markers (other bytes untouched). --raw writes the exact bytes to hash and apply.
+                patch = stage.escape_for_terminal(patch) if sys.stdout.isatty() else stage.escape_invisible(patch)
+            sys.stdout.buffer.write(patch)
             return 0
         return _apply_job(job, args.sha256)
-    except (stage.Refused, OSError):
-        sys.stderr.write('agy-bridge: implementation path or operation refused\n')
+    except (stage.Refused, OSError) as exc:
+        lines = stage.explain(exc, operation)
+        sys.stderr.write('agy-bridge: ' + lines[0] + '\n')
+        sys.stderr.writelines(line + '\n' for line in lines[1:])
         return config.EXIT_REFUSED
     except (ValueError, config.UsageError) as exc:
         detail = 'invalid JSON input' if isinstance(exc, json.JSONDecodeError) else _tail(str(exc))

@@ -174,3 +174,37 @@ def test_linux_namespace_mounts_and_network(areas, tmp_path):
         tree=tree, timeout_s=5,
     )
     assert code == 0, detail
+
+
+def _fake_bwrap(tmp_path, monkeypatch, output):
+    tool = tmp_path / 'bwrap'
+    tool.write_text('#!/bin/sh\nprintf "%s\\n" "' + output + '"\n')
+    tool.chmod(0o700)
+    tree = tmp_path / 'tree'
+    tree.mkdir(mode=0o700)
+    monkeypatch.setattr(edit_sandbox.sys, 'platform', 'linux')
+    monkeypatch.setattr(edit_sandbox.sandbox, 'executable', lambda name, path: str(tool))
+    return tool, tree
+
+
+def test_old_bubblewrap_is_refused_before_the_agy_probe(tmp_path, monkeypatch):
+    _, tree = _fake_bwrap(tmp_path, monkeypatch, 'bubblewrap 0.6.1')
+    monkeypatch.setattr(edit_sandbox, 'agent_command', lambda *a, **k: pytest.fail('AGY probe ran'))
+    with pytest.raises(edit_sandbox.Unavailable) as info:
+        edit_sandbox.preflight(tree=str(tree), profile=str(tmp_path / 'p'), exe='/trusted/agy')
+    assert str(info.value) == ('implement requires Bubblewrap 0.8.0+ (found 0.6.1; --disable-userns is '
+                               'unsupported; Ubuntu 22.04 ships 0.6.x; Debian 12+/Ubuntu 24.04+ qualify)')
+
+
+@pytest.mark.parametrize('output,expected', [('bubblewrap 0.9.0', (0, 9, 0)), ('bubblewrap 0.8.0', (0, 8, 0)),
+                                             ('something else', None)])
+def test_new_or_unparseable_bubblewrap_proceeds(tmp_path, monkeypatch, output, expected):
+    tool, tree = _fake_bwrap(tmp_path, monkeypatch, output)
+    assert edit_sandbox.bwrap_version(str(tool), str(tree)) == expected
+    edit_sandbox.check_bwrap_version(str(tree))  # no refusal
+
+
+def test_bubblewrap_version_check_is_linux_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(edit_sandbox.sys, 'platform', 'darwin')
+    monkeypatch.setattr(edit_sandbox.sandbox, 'executable', lambda *a: pytest.fail('bwrap looked up on macOS'))
+    edit_sandbox.check_bwrap_version(str(tmp_path))

@@ -10,7 +10,8 @@ on a throw-away account, see [MANUAL_TEST.md](MANUAL_TEST.md)).
   read-only runner pins session permissions with `--settings`. The bridge refuses versions 1.5.7–1.5.15 because
   those releases can default to Auto and are outside the bridge's supported session-settings range.
 - An unknown major version fails closed with exit code 14. The implementation workflow requires AGY 1.5.16 or above
-  within major version 1 and Linux Bubblewrap. Its authenticated edit and resume behavior stays unverified until a
+  within major version 1 and Linux Bubblewrap 0.8.0 or later (`--disable-userns`; `doctor --implementation` and the
+  implement preflight refuse an older `bwrap --version`). Its authenticated edit and resume behavior stays unverified until a
   real account and a host that supports Bubblewrap are available.
 
 ## Unverified assumptions
@@ -30,9 +31,9 @@ on a throw-away account, see [MANUAL_TEST.md](MANUAL_TEST.md)).
 | C12 | `agy` finds its sign-in under the real `HOME` and needs nothing else from the environment | `config.build_agy_env` | run with the five variables only |
 | C13 | The `~/.gemini` folder is where `agy` keeps settings (the doctor only reports whether it exists) | `cli.cmd_doctor` | look at where `agy` writes |
 | C14 | Output is plain text, possibly with colour codes and CRLF; the bridge strips both | `report.clean_answer` | capture a real answer |
+| C15 | Whether `agy` reads stdin; the bridge gives it the pty | `runner.run_agy` | try `agy --print` with closed stdin |
 | C16 | `agy --version` and `agy models` are harmless to run with an empty folder as the working directory and the five-name environment | `runner.detect_version`, `cli._check_models` | run them |
 | C17 | Delegate has no `--diff` and runs no git. Explicit local patch checks run git apply only in scratch; see GRADING.md | n/a | n/a |
-| C15 | Whether `agy` reads stdin; the bridge gives it the pty | `runner.run_agy` | try `agy --print` with closed stdin |
 
 ## Still open
 - Does the answer ever echo staged file contents on stderr (the bridge never prints stderr for that reason)?
@@ -68,6 +69,15 @@ protection. It was tried here and changed nothing observable, because nothing wa
 A smaller check, with one fake file in a scratch repository: `doctor --offline` passes and `delegate` with
 `gemini-3.8-flash-low` returned a correct answer in 10 s. The permission probes above (C7, C10, C11) were **not** repeated
 on this version.
+
+## Summary for the README
+
+The test suite uses a fake `agy`. The bridge has been run against the real `agy` 1.4.3 (2026-10-20, fake files
+only): doctor, dry-run and delegate work, and writes, commands, reads outside the folder and network use were not
+possible headless without a permission. That is one version on one machine, not a guarantee. A basic delegation
+also worked on 1.4.12. The plugin has been loaded in real Claude Code sessions. Implementation has offline coverage
+for edit, check, resume and patch application; an authenticated end-to-end implementation job still needs
+verification on a Linux host with working Bubblewrap namespaces.
 
 ## Implementation verification
 

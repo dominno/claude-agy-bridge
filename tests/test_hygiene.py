@@ -9,12 +9,12 @@ import pytest
 from conftest import ROOT
 
 COMMAND_TOOLS = {
-    'delegate': ('delegate', 'dry-run', 'events'),
+    'delegate': ('dry-run', 'events'),
     'doctor': ('doctor',),
     'dry-run': ('dry-run', 'events'),
     'implement': (),
     'jobs': ('jobs list',),
-    'queue': ('queue', 'dry-run', 'status', 'verdict'),
+    'queue': ('queue add --dry-run', 'queue status', 'jobs list -C', 'dry-run', 'status'),
     'status': ('status',),
 }
 FORBIDDEN_MODULES = {"urllib", "urllib2", "urllib3", "socket", "http", "httplib", "requests", "ftplib", "smtplib",
@@ -132,9 +132,50 @@ def test_command_preapproval_is_scoped_to_its_subcommands():
         allowed = COMMAND_TOOLS[name[:-3]]
         if allowed:
             assert fields["allowed-tools"] == " ".join(
-                "Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge " + cmd + " *)" for cmd in allowed)
+                "Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge " + cmd + " *) "
+                'Bash("${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge" ' + cmd + " *)" for cmd in allowed)
         else:
             assert "allowed-tools" not in fields
+
+
+SENDING_COMMANDS = ("delegate", "queue", "implement")
+
+
+def _command(name):
+    text = open(os.path.join(ROOT, "commands", name + ".md")).read()
+    _, front, body = text.split("---\n", 2)
+    return dict(line.split(": ", 1) for line in front.strip().splitlines()), body
+
+
+@pytest.mark.parametrize("name", sorted(COMMAND_TOOLS))
+def test_only_read_only_commands_can_be_model_invoked(name):
+    fields, _ = _command(name)
+    if name in SENDING_COMMANDS:
+        assert fields.get("disable-model-invocation") == "true", name
+    else:
+        assert "disable-model-invocation" not in fields, name
+
+
+@pytest.mark.parametrize("name", sorted(COMMAND_TOOLS))
+def test_every_body_invocation_of_the_bridge_is_quoted(name):
+    _, body = _command(name)
+    assert "bin/agy-bridge" in body, name
+    for match in re.finditer(r"bin/agy-bridge", body):
+        before = body[max(0, match.start() - len('"${CLAUDE_PLUGIN_ROOT}/')):match.start()]
+        assert before == '"${CLAUDE_PLUGIN_ROOT}/' and body[match.end():match.end() + 1] == '"', (name, match.start())
+
+
+@pytest.mark.parametrize("name", SENDING_COMMANDS)
+def test_sending_commands_wait_for_user_confirmation(name):
+    _, body = _command(name)
+    flat = " ".join(body.split())
+    assert "STOP" in flat and "only after the user confirms" in flat, name
+
+
+def test_delegate_runs_the_real_call_only_after_confirmation():
+    _, body = _command("delegate")
+    assert body.index("dry-run --repo") < body.index("STOP") < body.index("delegate --repo")
+    assert "Run the real delegate only after the user confirms" in " ".join(body.split())
 
 
 def test_manifests_parse_and_have_required_fields():
@@ -344,3 +385,10 @@ def test_scratch_execution_is_only_called_by_explicit_grading_module():
     assert callers and set(callers) == {'grading.py'}
     from agy_bridge import grading
     assert grading.TIMEOUT == 300
+
+
+def test_threat_model_states_the_implement_agent_shares_the_host_network():
+    text = open(os.path.join(ROOT, "docs", "THREAT_MODEL.md")).read()
+    assert "share-net" in text and "metadata" in text and "169.254.169.254" in text
+    assert "share-net" in open(os.path.join(ROOT, "docs", "IMPLEMENT.md")).read()
+    assert "share-net" in open(os.path.join(ROOT, "commands", "implement.md")).read()

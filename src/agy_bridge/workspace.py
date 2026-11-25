@@ -14,8 +14,15 @@ from . import config, denylist, safety, stage
 from .scan import scan_bytes
 
 
-EDIT_DENY = ('.agents', 'AGENTS.md', 'GEMINI.md', '.mcp.json', '.agy-bridge.json',
-             '.gitmodules', '.envrc', '.direnv')
+# Agent instructions, editor/hook settings and auto-run configuration: an edit here would steer the next agent
+# or run code on checkout, commit or open. Names match at any depth; entries with "/" match from the root.
+# agy 1.5.x reads workspace customizations from .agents, .agent, _agents and _agent.
+EDIT_DENY = ('.agents', '.agent', '_agents', '_agent', 'AGENTS.md', 'AGENTS.override.md', 'GEMINI.md',
+             '.mcp.json', '.agy-bridge.json', '.gitmodules', '.envrc', '.direnv',
+             'CLAUDE.md', 'CLAUDE.local.md', '.claude', '.cursorrules', '.cursor', '.windsurfrules', '.windsurf',
+             '.clinerules', '.roo', '.kiro', '.github/copilot-instructions.md', '.github/instructions',
+             '.github/prompts', '.vscode', '.idea', '.githooks', '.husky',
+             '.pre-commit-config.yaml', '.devcontainer')
 MAX_FILE_BYTES = 1024 * 1024
 MAX_TREE_BYTES = 8 * 1024 * 1024
 MAX_DIFF_BYTES = 20 * 1024 * 1024
@@ -267,6 +274,17 @@ def git_tree(scratch, label, files, env):
     return tree.decode('ascii')
 
 
+def check_new_text(before, after, paths, error):
+    """Refuse model-written files that add terminal control or bidi characters (existing ones are tolerated)."""
+    for kind, rel in paths:
+        if kind == 'deleted':
+            continue
+        original = before.get(rel)
+        refusal = stage.check_terminal_text(rel, after[rel].data, original.data if original is not None else None)
+        if refusal:
+            raise error('%s, first at line %d' % (stage.describe(refusal[0]), refusal[0].line))
+
+
 def change_inventory(before, after):
     changes = {}
     for rel in sorted(before.keys() | after.keys()):
@@ -286,6 +304,7 @@ def export_diff(workspace):
         raise Error('workspace baseline no longer matches the approved snapshot')
     candidate = _capture_tree(workspace.tree, workspace.extra_deny)
     paths = tuple((kind, rel) for rel, kind in change_inventory(baseline, candidate).items())
+    check_new_text(baseline, candidate, paths, Error)
     if not paths:
         return Changes((), b'', candidate)
 

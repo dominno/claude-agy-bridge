@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 import re
+import stat
 import time
 from typing import Iterator, NamedTuple, TypedDict, cast
 import uuid
@@ -25,7 +26,7 @@ MAX_STATE = 2 * 1024 * 1024
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 _READ_FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 _SUMMARY = ('job_id', 'phase', 'repository', 'created_at', 'started_at', 'updated_at', 'attempt', 'last_agy_activity_at',
-            'bridge_exit')
+            'bridge_exit', 'check_inputs_changed')
 _PUBLIC = _SUMMARY + ('base_commit', 'conversation_id', 'detail', 'baseline_check_exit', 'check_exit',
                       'changes', 'patch_sha256', 'failure_kind')
 
@@ -52,6 +53,7 @@ class JobState(TypedDict, total=False):
     baseline_check_exit: int
     check_exit: int
     changes: list[list[str]]
+    check_inputs_changed: list[str]
     patch_sha256: str
     run_id: str
     manifest: list[dict]
@@ -103,7 +105,11 @@ def store_root(create=False):
 
 def job_path(job_id):
     if not ID.fullmatch(job_id):
-        raise config.UsageError('invalid implementation job ID')
+        from .verdicts import NAME
+        hint = ('; queue job names are shown by agy-bridge jobs list -C <repo>'
+                if isinstance(job_id, str) and NAME.fullmatch(job_id) else '')
+        raise config.UsageError('invalid implementation job ID: expected 32 lowercase hex characters ([0-9a-f]{32}); '
+                                'list jobs with: agy-bridge jobs list' + hint)
     with _open_store() as (root, fd), _child_directory(fd, job_id):
         return root / job_id
 
@@ -184,6 +190,8 @@ def _read_state(parent, job_id):
     if 'changes' in state and (not isinstance(state['changes'], list) or any(
             not _is_string_list(change) or len(change) != 2 for change in state['changes'])):
         raise InvalidState('invalid implementation change list')
+    if 'check_inputs_changed' in state and not _is_string_list(state['check_inputs_changed']):
+        raise InvalidState('invalid implementation check input list')
     if phase in APPLY_PHASES and not (state.get('changes') and digest):
         raise InvalidState('completed implementation patch state is missing')
     return cast(JobState, state)
@@ -341,3 +349,173 @@ def request_cancel(job):
         confirmed = _observe(parent, job.name)
         if confirmed.state.get('run_id') != run_id or not (confirmed.worker_active or confirmed.phase == 'canceled'):
             raise config.UsageError('execution ended before cancellation could be confirmed')
+
+
+# Phases with nothing left to review, resume or recover; removing one needs no --force.
+TERMINAL = frozenset({'applied', 'canceled', 'failed', 'no_changes'})
+LEFTOVER_PREFIXES = ('.prepare-', '.pending-')
+LEFTOVER_AGE = 3600
+
+
+def _open_owned_directory(parent, name, expected=None):
+    """Open a child directory without following links; it must be ours. Make it writable so entries can go."""
+    fd = os.open(name, _DIRECTORY, dir_fd=parent)
+    try:
+        info = os.fstat(fd)
+        if expected is not None and (info.st_dev, info.st_ino) != (expected.st_dev, expected.st_ino):
+            raise OSError('directory changed while it was being removed')
+        if info.st_uid != os.getuid():
+            raise config.UsageError('implementation job directories must be owned by the current user')
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _remove_tree(parent, name, dry_run=False):
+    """Delete parent/name with dir_fd-relative traversal; return the bytes reclaimed.
+
+    Symlinks are unlinked, never followed; every directory is opened O_NOFOLLOW and must be owned by this user.
+    Read-only directories (the baseline snapshot) get u+rwx first. dry_run only measures.
+    """
+    total = 0
+    top = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    if not stat.S_ISDIR(top.st_mode):
+        if not dry_run:
+            os.unlink(name, dir_fd=parent)
+        return top.st_size
+    stack = []
+    try:
+        fd = _open_owned_directory(parent, name, top)
+        stack.append((parent, name, fd, iter(os.listdir(fd))))
+        while stack:
+            owner, label, fd, entries = stack[-1]
+            entry = next(entries, None)
+            if entry is None:
+                stack.pop()
+                os.close(fd)
+                if not dry_run:
+                    os.rmdir(label, dir_fd=owner)
+                continue
+            info = os.stat(entry, dir_fd=fd, follow_symlinks=False)
+            if stat.S_ISDIR(info.st_mode):
+                child = _open_owned_directory(fd, entry, info)
+                if not dry_run and info.st_mode & 0o700 != 0o700:
+                    os.fchmod(child, stat.S_IMODE(info.st_mode) | 0o700)
+                stack.append((fd, entry, child, iter(os.listdir(child))))
+                continue
+            if not dry_run:
+                os.unlink(entry, dir_fd=fd)
+            total += info.st_size
+    finally:
+        for _owner, _label, fd, _entries in reversed(stack):
+            os.close(fd)
+    return total
+
+
+def _phase_for_removal(parent, job_id, force):
+    try:
+        return _read_state(parent, job_id)['phase']
+    except InvalidState:
+        if force:
+            return 'unreadable'
+        raise config.UsageError('job %s has an unreadable state; pass --force to remove it anyway' % job_id) from None
+
+
+def removal_refusal(job_id, phase, force):
+    """Why a job in this phase must stay, or None."""
+    if phase in TERMINAL or force:
+        return None
+    if phase in REVIEWABLE:
+        return ('job %s is %s and its patch was not applied; apply or review it first, or pass --force'
+                % (job_id, phase))
+    return 'job %s is %s, not finished; pass --force to remove it anyway' % (job_id, phase)
+
+
+def remove(job_id, force=False, dry_run=False):
+    """Delete one job directory under its lock; return (phase, bytes)."""
+    job = job_path(job_id)
+    with lock(job) as fd:
+        if fd is None:
+            raise config.UsageError('job %s has an active worker or operation; cancel it first '
+                                    '(agy-bridge jobs cancel %s)' % (job_id, job_id))
+        with _open_store() as (_, store), _child_directory(store, job_id) as parent:
+            phase = _phase_for_removal(parent, job_id, force)
+            refusal = removal_refusal(job_id, phase, force)
+            if refusal:
+                raise config.UsageError(refusal)
+            return phase, _remove_tree(store, job_id, dry_run)
+
+
+def _age(info, now):
+    return now - info.st_mtime
+
+
+def _unreadable_stamp(parent):
+    """Age of a job whose state cannot be read: the state file's mtime, else the directory's.
+
+    The directory mtime alone is not usable: taking the job lock creates the lock file on the first prune, and
+    sweeping .pending files changes it too, so an unreadable job would always look new.
+    """
+    try:
+        return os.stat('state.json', dir_fd=parent, follow_symlinks=False).st_mtime
+    except OSError:
+        return os.fstat(parent).st_mtime
+
+
+def prune(older_than, force=False, dry_run=False, now=None):
+    """Remove old finished jobs and stale staging leftovers; return a report dict."""
+    now = time.time() if now is None else now
+    report = dict(dry_run=dry_run, removed=[], kept=[], leftovers=0, bytes=0)
+    try:
+        with _open_store() as (_, store):
+            names = sorted(os.listdir(store))
+            for name in names:
+                if name.startswith(LEFTOVER_PREFIXES):
+                    try:
+                        info = os.stat(name, dir_fd=store, follow_symlinks=False)
+                        if info.st_uid == os.getuid() and _age(info, now) > LEFTOVER_AGE:
+                            report['bytes'] += _remove_tree(store, name, dry_run)
+                            report['leftovers'] += 1
+                    except FileNotFoundError:
+                        pass
+    except FileNotFoundError:
+        return report
+    for name in names:
+        if not ID.fullmatch(name):
+            continue
+        try:
+            job = job_path(name)
+            with lock(job) as fd:
+                if fd is None:
+                    report['kept'].append(dict(job_id=name, reason='active worker'))
+                    continue
+                with _open_store() as (_, store), _child_directory(store, name) as parent:
+                    try:
+                        state = _read_state(parent, name)
+                        phase = state['phase']
+                        stamp = state.get('updated_at') or state.get('created_at') or os.fstat(parent).st_mtime
+                    except InvalidState:
+                        phase, stamp = 'unreadable', _unreadable_stamp(parent)
+                    if now - stamp < older_than:
+                        report['kept'].append(dict(job_id=name, reason='newer than --older-than'))
+                        for entry in os.listdir(parent):
+                            if entry.startswith('.pending-'):
+                                info = os.stat(entry, dir_fd=parent, follow_symlinks=False)
+                                if stat.S_ISREG(info.st_mode) and _age(info, now) > LEFTOVER_AGE:
+                                    if not dry_run:
+                                        os.unlink(entry, dir_fd=parent)
+                                    report['leftovers'] += 1
+                                    report['bytes'] += info.st_size
+                        continue
+                    refusal = removal_refusal(name, phase, force)
+                    if refusal:
+                        report['kept'].append(dict(job_id=name, reason='phase ' + phase + ' needs --force'))
+                        continue
+                    report['bytes'] += _remove_tree(store, name, dry_run)
+                    report['removed'].append(dict(job_id=name, phase=phase))
+        except FileNotFoundError:
+            continue
+        except (OSError, config.UsageError) as exc:
+            report['kept'].append(dict(job_id=name, reason='could not be removed safely: ' + type(exc).__name__))
+    return report

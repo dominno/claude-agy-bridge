@@ -1,13 +1,13 @@
 ---
 description: Show exactly which files and which agy command line a delegation would use, and send nothing
 argument-hint: <task> [files or globs to include]
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge dry-run *) Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge events *)
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge dry-run *) Bash("${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge" dry-run *) Bash(${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge events *) Bash("${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge" events *)
 ---
 
 Request: $ARGUMENTS
 
-Run `${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge dry-run --repo <absolute path of the current project folder> --file <path> [--glob <pattern>] -- "<task>"`
-and show the user the manifest (path, bytes, hash prefix) and the agy command line it prints. No file contents and no task text are sent to agy. It writes the checked files to a temporary 0700 folder that is removed before it exits, and runs `agy --version` with the five-name environment in an empty folder. That is the only program a dry run starts; delegate and dry-run run no git.
+Run `"${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge" dry-run --repo <absolute path of the current project folder> --file <path> [--glob <pattern>] [--cite] [--allow-fragment-file <path>] -- "<task>"`
+with exactly the same `--file`/`--glob`/`--cite`/`--allow-fragment-file` arguments the later delegate will use, and show the user the manifest (path, bytes, hash prefix) and the agy command line it prints. No file contents and no task text are sent to agy. It writes the checked files to a temporary 0700 folder that is removed before it exits, and runs `agy --version` with the five-name environment in an empty folder. That is the only program a dry run starts; delegate and dry-run run no git.
 The same refusals apply as for a real delegation, so a refusal here (exit code 4) predicts a refusal there.
 Run this before the first delegation of a session and whenever the set of input files changes.
 
@@ -20,5 +20,5 @@ while denylisted matches are skipped. R5 notices show the first key-shaped hit's
 Dry runs now append metadata to `<repo>/.agy-bridge/events.jsonl`, with `dry_run: true`, no sent files and zero
 sent bytes. They still send no task or file contents and do not write the legacy home log. Add `.agy-bridge/` to
 the target repo's `.gitignore`. Read recent metadata with
-`${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge events --repo <absolute project root> --tail 10`.
-See `docs/THREAT_MODEL.md` for the two supported example fragments and the safe-journaling limits.
+`"${CLAUDE_PLUGIN_ROOT}/bin/agy-bridge" events --repo <absolute project root> --tail 10`.
+See `${CLAUDE_PLUGIN_ROOT}/docs/THREAT_MODEL.md` for the two supported example fragments and the safe-journaling limits.

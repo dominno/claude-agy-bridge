@@ -177,6 +177,7 @@ def _review_patch(scratch, env, before, expected, patch):
     after = _blobs(scratch, env, entries)
     if workspace.change_inventory(before, after) != expected:
         raise ApplyError('patch does not match the reviewed change inventory')
+    workspace.check_new_text(before, after, tuple((kind, rel) for rel, kind in expected.items()), ApplyError)
     return after
 
 

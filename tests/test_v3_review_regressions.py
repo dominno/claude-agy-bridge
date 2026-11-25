@@ -270,9 +270,14 @@ def test_linux_backends_confine_files_network_and_detached_children(tmp_path,mon
         return real(name,path)
     monkeypatch.setattr(sandbox,'executable',executable)
     monkeypatch.setattr(sandbox,'linux_bindings',lambda command: ([sys.executable],[]))
+    checked=[]
+    monkeypatch.setattr(sandbox,'bwrap_version',lambda tool, tree: checked.append(tool) or (0,9,0))
     argv=sandbox.wrap([sys.executable,'check.py'],str(tmp_path),{'PATH':'/usr/bin:/bin'},jail=str(tmp_path/'root'))
     if backend=='bwrap':
+        assert checked==['/usr/bin/bwrap']
         assert '--unshare-all' in argv and '--die-with-parent' in argv and '--ro-bind' in argv
+        assert '--unshare-user' in argv and '--disable-userns' in argv
+        assert argv.index('--disable-userns') < argv.index('--')
         assert argv[argv.index('--remount-ro')+1]=='/'
         assert argv[argv.index('--bind')+1:][:2]==[str(tmp_path),str(tmp_path)]
     else:
@@ -280,6 +285,65 @@ def test_linux_backends_confine_files_network_and_detached_children(tmp_path,mon
         assert 'remount,bind,ro' in argv[-1] and 'chroot' in argv[-1]
         assert 'remount,ro' in argv[-1]
         assert '--bounding-set=-all' in argv[-1] and '--no-new-privs' in argv[-1]
+
+
+def test_grading_sandbox_refuses_an_old_bubblewrap(tmp_path, monkeypatch):
+    from agy_bridge import sandbox
+    monkeypatch.setattr(sandbox.sys, 'platform', 'linux')
+    tool = tmp_path / 'bwrap'
+    tool.write_text('#!/bin/sh\necho "bubblewrap 0.6.1"\n')
+    tool.chmod(0o700)
+    real = sandbox.executable
+    monkeypatch.setattr(sandbox, 'executable', lambda name, path: str(tool) if name == 'bwrap' else real(name, path))
+    monkeypatch.setattr(sandbox, 'linux_bindings', lambda command: pytest.fail('bindings built before the gate'))
+    monkeypatch.setattr(sandbox, '_bwrap_versions', {})
+    with pytest.raises(sandbox.Unavailable) as info:
+        sandbox.wrap([sys.executable, 'check.py'], str(tmp_path), {'PATH': '/usr/bin:/bin'})
+    message = str(info.value)
+    assert 'grading requires Bubblewrap 0.8.0+ (found 0.6.1; --disable-userns is unsupported; ' in message
+    assert 'Ubuntu 22.04 ships 0.6.x; Debian 12+/Ubuntu 24.04+ qualify' in message
+    assert 'sandbox unavailable on this machine' in message
+
+
+def test_bwrap_version_gate_parses_and_proceeds_on_unknown(monkeypatch):
+    from agy_bridge import sandbox
+    assert sandbox.parse_bwrap_version('bubblewrap 0.11.0\n') == (0, 11, 0)
+    assert sandbox.bwrap_too_old((0, 8, 0), 'grading') is None
+    assert sandbox.bwrap_too_old(None, 'grading') is None
+    monkeypatch.setattr(sandbox, '_bwrap_versions', {})
+    assert sandbox.bwrap_version('/nonexistent/bwrap', '/') is None
+
+
+@pytest.mark.skipif(not sys.platform.startswith('linux'), reason='Linux namespaces only')
+@pytest.mark.parametrize('backend', ['bwrap', 'unshare'])
+def test_checked_code_cannot_create_a_nested_user_namespace(tmp_path, monkeypatch, backend):
+    """bwrap passes --disable-userns; the unshare fallback relies on chroot, which makes CLONE_NEWUSER fail (EPERM)."""
+    import subprocess
+    from agy_bridge import sandbox
+    real = sandbox.executable
+    if real(backend, '/usr/bin:/bin:/usr/local/bin') is None:
+        pytest.skip('%s absent' % backend)
+    if backend == 'unshare':
+        monkeypatch.setattr(sandbox, 'executable', lambda name, path: None if name == 'bwrap' else real(name, path))
+    tree = tmp_path / 'tree'
+    tree.mkdir()
+    code = ('import ctypes, ctypes.util, os, sys\n'
+            'libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)\n'
+            'rc = libc.unshare(0x10000000)\n'
+            'print("UNSHARE", rc, ctypes.get_errno())\n'
+            'sys.exit(3 if rc == 0 else 0)\n')
+    (tree / 'probe.py').write_text(code)
+    try:
+        argv = sandbox.wrap([sys.executable, 'probe.py'], str(tree), {'PATH': os.environ.get('PATH', '/usr/bin:/bin')},
+                            jail=str(tmp_path / 'root'))
+    except sandbox.Unavailable as exc:
+        pytest.skip(str(exc))
+    proc = subprocess.run(argv, cwd=str(tree), capture_output=True, text=True, timeout=60)
+    if 'UNSHARE' not in proc.stdout:
+        pytest.skip('sandbox could not start here: %s' % proc.stderr[-300:])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    if backend == 'unshare':
+        assert proc.stdout.split()[-1] == '1'  # EPERM
 
 
 @pytest.mark.parametrize('need,expected', [(None,1),(False,1),(True,2)])

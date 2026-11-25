@@ -21,8 +21,13 @@ def test_r5_count_is_per_rule_and_never_returns_the_match():
 
 
 def test_r5_very_long_lines_stay_fast_and_clean():
-    assert scan_bytes(b"a" * 5_000_000) == {}
+    import time
+    from agy_bridge import config
+    # The total-size gate refuses anything larger before the scan, so MAX_TOTAL_BYTES is the real worst case.
+    start = time.time()
+    assert scan_bytes(b"a" * config.MAX_TOTAL_BYTES) == {}
     assert scan_bytes(b"secret " + b" " * 200_000 + b"x") == {}
+    assert time.time() - start < 3
 
 
 def test_r5_ordinary_code_is_clean():
@@ -210,3 +215,112 @@ def test_r5_oversize_inputs_are_refused_before_any_scan(tmp_path, monkeypatch):
     with pytest.raises(stage.Refused):  # the total goes over the limit at big.txt, so it is not scanned
         stage.prepare(str(tmp_path), ["ok.txt", "big.txt"], [], "t", max_bytes=15)
     assert 5000 not in scanned and 10 in scanned
+
+
+# ---------- council round 1: more provider tokens and short passwords ----------
+
+@pytest.mark.parametrize("text", [
+    "PuTTY-User-Key-File-2: ssh-rsa",
+    "DefaultEndpointsProtocol=https;AccountName=x;AccountKey=%s==;" % F,
+    "VAULT_ADDR=x hvs.%s" % F,
+    "dop_v1_" + "0123456789abcdef" * 4,
+    "pypi-AgE" + F + F,
+    "shpss_" + "0123456789abcdef" * 2,
+    "lin_api_" + F + "abcdefgh",
+    "gsk_" + F + F[:10],
+    "xai-" + F + F[:10],
+    "DB_PASSWORD=hunter22",
+    "MYSQL_PWD: s3cretpw",
+    "SMTP_PASS='abc12345'",
+    "define('DB_PASSWORD', 'wp12pass');",
+    'define( "DB_PASSWORD" , "wp12pass" );',
+    "export ADMIN_PASSWD=letme1nnow",
+    "DB_PASSWORD=hunter22 # dev only",
+    "password=hunter22;",
+    'password = "old_pass_2"',
+    '{"db_password": "s3cretpw"}',
+])
+def test_r5_council_round_one_shapes_are_caught(text):
+    assert scan_bytes(text.encode()), text
+
+
+@pytest.mark.parametrize("text", [
+    "DB_PASSWORD=changeme",
+    "DB_PASSWORD=${DB_PASSWORD}",
+    "DB_PASSWORD=<your-password-1>",
+    "password = get_password(user1)",
+    "pwd = os.getcwd()",
+    "if password == 'x':",
+    "DB_PASS=short1",
+    "bypass=abc12345",
+    "define('DB_NAME', 'wordpress1');",
+    "AccountKey=<your key>",
+    "PuTTY is an SSH client",
+    "self.password = hashlib.sha256(raw).hexdigest()",
+    "password = argon2.hash(raw)",
+    "new_password = old_password2",
+    "user_pwd=input_field_2",
+    "password = config.db_password1",
+    "self.pwd = request.form.get2",
+])
+def test_r5_council_round_one_lookalikes_are_not_flagged(text):
+    assert scan_bytes(text.encode()) == {}, text
+
+
+def test_r5_short_password_rule_stays_fast_on_long_names_and_values():
+    import time
+    start = time.time()
+    scan_bytes(b"A" * 200_000 + b"_PASSWORD=" + b"1" * 200_000)
+    scan_bytes(b"_PASS=" * 33000)
+    scan_bytes(b"password='" * 20000)
+    assert time.time() - start < 3
+
+
+# ---------- council round 3: *_KEY assignments and more token shapes ----------
+
+@pytest.mark.parametrize("text", [
+    'SIGNING_KEY = "9f8e7d6c5b4a39281706f5e4d3c2b1a0"',
+    "DB_ENCRYPTION_KEY=Zm9vYmFyYmF6cXV4MTIzNDU2",
+    "export MASTER_KEY=a1b2c3d4e5f6a7b8c9d0",
+    "const privateKey = 'Mk9xQ2pLr7Vt5wYz3BnA';",
+    "signingKey: x9Y8w7V6u5T4s3R2q1P0",
+    '{"encryptionKey": "AbCdEf0123456789XyZ="}',
+    "session-key: 0123456789abcdefABCD",
+    ":app_key => \"base64:Qm9vbVNlY3JldDEyMzQ1Ng==\"",
+    "JWT_KEY='hs256:k1e2y3s4e5c6r7e8t9'",
+    "hmac_key = 6a2f9c1e7b3d5a8f0c4e",
+    "ACCESS_KEY: AbcdEfgh1234Ijkl5678",
+    "client_key=c0ffee12deadbeef3456",
+    "Endpoint=sb://ns.servicebus.windows.net/;SharedAccessKeyName=root;SharedAccessKey=" + "Ab1+" * 8 + "=",
+    "AGE-SECRET-KEY-1" + "QQ9" * 19 + "Q",
+    "ATATT3xFfGF0" + "aB3_-" * 8,
+    "token: dapi" + "0123456789abcdef" * 2,
+])
+def test_r5_council_round_three_shapes_are_caught(text):
+    assert scan_bytes(text.encode()), text
+
+
+@pytest.mark.parametrize("text", [
+    'KEY_NAME = "primary"',
+    "public_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample",
+    "signing_key = 'short1'",
+    "privateKey = 'abcdefghijklmnopqrstuv'",
+    "access_key: ABCDEFGHIJKLMNOPQRSTU",
+    "session_key = request.session.session_key",
+    "master_key_path = '/etc/keys/master1234567890.pem'",
+    "monkey = 1234567890abcdef1234",
+    "SharedAccessKeyName=RootManageSharedAccessKey",
+    "AGE-SECRET-KEY-1SHORT",
+    "rapid" + "0123456789abcdef" * 2,
+])
+def test_r5_council_round_three_lookalikes_are_not_flagged(text):
+    assert scan_bytes(text.encode()) == {}, text
+
+
+def test_r5_named_key_rule_stays_fast_on_long_runs():
+    import time
+    start = time.time()
+    scan_bytes(b"private_key=" * 20000)
+    scan_bytes(b"signing_key = '" + b"a" * 400_000)
+    scan_bytes(b"crypt_key:" + b"1" * 400_000)
+    assert time.time() - start < 3

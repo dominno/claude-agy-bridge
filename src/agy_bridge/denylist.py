@@ -62,6 +62,26 @@ PATH_RULES: Sequence[PathRule] = (
     PathRule("*.mp3", "media/a.mp3", "src/mp3.md"),
     PathRule("*.png", "media/a.png", "src/png.md"),
     PathRule("*.jpg", "media/a.jpg", "src/jpg.md"),
+    # Private keys, tool tokens and state files that commonly hold secrets in plain text.
+    PathRule("*.ppk", "keys/id.ppk", "src/ppk.md"),
+    PathRule(".dev.vars", "worker/.dev.vars", "worker/dev_vars.md"),
+    PathRule(".vault-token", "home/.vault-token", "src/vault_token.md"),
+    PathRule("*.tfstate", "infra/terraform.tfstate", "infra/tfstate.md"),
+    PathRule("*.tfstate.*", "infra/terraform.tfstate.backup", "infra/main.tf"),
+    PathRule(".terraform", "infra/.terraform/providers/x", "infra/terraform.md"),
+    PathRule("*.ovpn", "vpn/client.ovpn", "vpn/ovpn.md"),
+    PathRule(".s3cfg", "home/.s3cfg", "src/s3cfg.md"),
+    PathRule(".boto", "home/.boto", "src/boto_helper.py"),
+    PathRule(".*_history", "home/.zsh_history", "docs/history.md"),
+    PathRule(".envrc", "proj/.envrc", "proj/envrc.md"),
+    PathRule("wp-config.php", "site/wp-config.php", "site/wp-config-sample.md"),
+    PathRule(".secret*", "cfg/.secrets", "src/secret.py"),
+    PathRule("*.tfvars", "infra/prod.tfvars", "infra/variables.tf"),
+    PathRule("*.tfvars.json", "infra/prod.tfvars.json", "infra/tfvars.md"),
+    PathRule("kubeconfig", "deploy/kubeconfig", "docs/kubeconfig.md"),
+    PathRule("kubeconfig.y*ml", "deploy/kubeconfig.yaml", "src/kubeconfig.py"),
+    PathRule("id_dsa*", "home/id_dsa.pub", "src/id_data.py"),
+    PathRule(".yarnrc.yml", "web/.yarnrc.yml", "web/yarnrc.md"),
 )
 
 

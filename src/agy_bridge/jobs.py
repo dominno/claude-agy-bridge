@@ -1,8 +1,11 @@
 """Read-only inventory of local implementation and delegation jobs."""
 from __future__ import annotations
 
+import argparse
 import json
 import math
+import os
+import stat
 import sys
 from dataclasses import asdict, dataclass
 
@@ -31,31 +34,39 @@ class JobView:
 
 
 def add_arguments(subparsers):
-    group = subparsers.add_parser('jobs', help='inspect local background jobs', allow_abbrev=False)
+    group = subparsers.add_parser('jobs', help='inspect local background jobs', allow_abbrev=False,
+                                  description='inspect local background jobs; with no subcommand, lists jobs '
+                                              '(the same as jobs list)')
     group.set_defaults(handler=dispatch, active=False, repo=None, queue_dir=None, json=False,
                        allow_non_git_root=False)
+    _inventory_arguments(group)
     commands = group.add_subparsers(dest='jobs_command')
     listing = commands.add_parser('list', help='list implementation jobs and a selected delegation queue',
                                   allow_abbrev=False)
-    _inventory_arguments(listing)
+    # SUPPRESS: `jobs -C X list` must keep the options parsed before `list`; argparse otherwise lets the
+    # subparser's own defaults overwrite them.
+    _inventory_arguments(listing, suppress=True)
     active = subparsers.add_parser('ps', help='show active local jobs', allow_abbrev=False)
     _inventory_arguments(active, active_default=True)
+    active.set_defaults(inventory_command='ps')
     return commands
 
 
-def _inventory_arguments(parser, *, active_default=False):
+def _inventory_arguments(parser, *, active_default=False, suppress=False):
     parser.set_defaults(handler=dispatch)
+    unset = {'default': argparse.SUPPRESS} if suppress else {}
     if active_default:
         parser.add_argument('--all', dest='active', action='store_false', default=True,
                             help='also show jobs without a live worker')
     else:
-        parser.add_argument('--active', action='store_true', help='show only work with a live worker')
+        parser.add_argument('--active', action='store_true', help='show only work with a live worker', **unset)
     parser.add_argument('-C', '--repo', metavar='ROOT',
-                        help='filter implementation jobs and include the delegation queue for this repository')
-    parser.add_argument('--queue-dir', metavar='PATH', help='select a delegation queue under --repo')
+                        help='filter implementation jobs and include the delegation queue for this repository',
+                        **unset)
+    parser.add_argument('--queue-dir', metavar='PATH', help='select a delegation queue under --repo', **unset)
     parser.add_argument('--allow-non-git-root', action='store_true',
-                        help='allow --repo to select a delegation queue without a .git entry')
-    parser.add_argument('--json', action='store_true', help='emit a versioned JSON inventory')
+                        help='allow --repo to select a delegation queue without a .git entry', **unset)
+    parser.add_argument('--json', action='store_true', help='emit a versioned JSON inventory', **unset)
 
 
 def _timestamp(value):
@@ -95,6 +106,9 @@ def list_jobs(*, repository: str | None = None, queue_dir: str | None = None,
             warnings.append(f'implementation {job_id}: {warning}' if job_id else warning)
         if summary is None or (repository is not None and summary['repository'] != repository):
             continue
+        if summary.get('check_inputs_changed') and not (active_only and not summary['worker_active']):
+            from .implement import check_inputs_warning
+            warnings.append(f'implementation {job_id}: {check_inputs_warning(summary)}')
         active = summary['worker_active']
         cancel_requested = summary['cancel_requested']
         jobs.append(JobView(
@@ -128,6 +142,51 @@ def list_jobs(*, repository: str | None = None, queue_dir: str | None = None,
     return jobs, warnings
 
 
+MAX_QUEUE_NOTE_SCAN = 10000
+
+
+def _cwd_queue_note():
+    """'NOTE n queue job(s) pending in <repo>; use -C' when the cwd is inside a Git checkout with pending jobs.
+
+    A bounded, read-only listdir of <repo>/.agy-bridge/queue; nothing is created or followed.
+    """
+    try:
+        here = os.getcwd()
+    except OSError:
+        return None
+    while True:
+        if os.path.lexists(os.path.join(here, '.git')):
+            break
+        parent = os.path.dirname(here)
+        if parent == here:
+            return None
+        here = parent
+    folder = os.path.join(here, '.agy-bridge', 'queue')
+    try:
+        if not stat.S_ISDIR(os.lstat(folder).st_mode):
+            return None
+        count = 0
+        with os.scandir(folder) as entries:
+            for number, entry in enumerate(entries):
+                if number >= MAX_QUEUE_NOTE_SCAN:
+                    break
+                if entry.name.endswith('.job') and entry.is_file(follow_symlinks=False):
+                    count += 1
+    except OSError:
+        return None
+    if not count:
+        return None
+    return 'NOTE %d queue job(s) pending in %s; use -C (agy-bridge jobs list -C %s)' % (
+        count, stage.printable(_public_path(here)), stage.shell_arg(_public_path(here)))
+
+
+def _empty_message(args):
+    ps = getattr(args, 'inventory_command', None) == 'ps'
+    head = 'No active implementation jobs.' if args.active else 'No implementation jobs.'
+    return head + ' Delegation queues are listed per repository: agy-bridge %s -C <repo>' % (
+        'ps' if ps else 'jobs list')
+
+
 def dispatch(args):
     try:
         jobs, warnings = list_jobs(repository=args.repo, queue_dir=args.queue_dir, active_only=args.active,
@@ -135,12 +194,24 @@ def dispatch(args):
     except config.UsageError as exc:
         print('agy-bridge: ' + stage.printable(str(exc)), file=sys.stderr)
         return config.EXIT_USAGE
-    except (stage.Refused, OSError):
-        print('agy-bridge: repository or queue path refused', file=sys.stderr)
+    except (stage.Refused, OSError) as exc:
+        lines = stage.explain(exc, 'jobs inventory')
+        print('agy-bridge: ' + lines[0], file=sys.stderr)
+        for line in lines[1:]:
+            print(line, file=sys.stderr)
         return config.EXIT_REFUSED
 
+    notes = []
+    if args.repo is None:
+        # Without -C no delegation queue was searched; say so instead of a bare "No jobs".
+        if not jobs:
+            notes.append(_empty_message(args))
+        note = _cwd_queue_note()
+        if note:
+            notes.append(note)
     if args.json:
-        result = {'schema_version': SCHEMA_VERSION, 'jobs': [asdict(job) for job in jobs], 'warnings': warnings}
+        result = {'schema_version': SCHEMA_VERSION, 'jobs': [asdict(job) for job in jobs],
+                  'warnings': warnings + notes}
         print(json.dumps(result, ensure_ascii=True, allow_nan=False))
         return 0
 
@@ -151,8 +222,10 @@ def dispatch(args):
             if job.queue_dir is not None:
                 path += ' [' + stage.printable(job.queue_dir) + ']'
             print(f'{stage.printable(job.phase):18} {job.kind:10} {stage.printable(job.job_id):32} {path}')
-    else:
+    elif not notes:
         print('No active jobs.' if args.active else 'No jobs.')
+    for note in notes:
+        print(note)
     for warning in warnings:
         print('agy-bridge: warning: ' + stage.printable(warning), file=sys.stderr)
     return 0

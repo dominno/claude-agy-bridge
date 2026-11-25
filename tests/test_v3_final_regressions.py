@@ -1,5 +1,6 @@
 """Crashing checks cannot spoof sandbox availability; agy probes never reap forever."""
 import json
+import os
 import subprocess
 import sys
 
@@ -17,10 +18,17 @@ def case(h, guarded_sandbox):
                    solution_files=['impl.py'], test_cmd=[sys.executable, 'check.py'])
 
 
-@pytest.mark.parametrize('payload', ["__import__('os').abort()",
-                                      "print('posix_spawn: invented'); raise RuntimeError('failed')",
-                                      "print('BRA failure blob'); raise RuntimeError('failed')"],
-                         ids=['abort', 'posix-spawn', 'bra'])
+# SIGKILL needs no crash reporter (an abort() on macOS can stall for minutes in ReportCrash).
+KILL = "__import__('os').kill(__import__('os').getpid(), 9)"
+ABORT = pytest.param("__import__('os').abort()", id='abort', marks=pytest.mark.skipif(
+    os.environ.get('AGY_TEST_ABORT') != '1', reason='SIGABRT coverage is opt-in: set AGY_TEST_ABORT=1'))
+
+
+@pytest.mark.parametrize('payload', [pytest.param(KILL, id='sigkill'), ABORT,
+                                      pytest.param("print('posix_spawn: invented'); raise RuntimeError('failed')",
+                                                   id='posix-spawn'),
+                                      pytest.param("print('BRA failure blob'); raise RuntimeError('failed')",
+                                                   id='bra')])
 @pytest.mark.parametrize('mode', ['mutant', 'diff'])
 def test_real_check_failure_does_not_report_unavailable(case, payload, mode):
     h, spec = case
@@ -35,10 +43,11 @@ def test_real_check_failure_does_not_report_unavailable(case, payload, mode):
         diff = f'--- impl.py\n+++ impl.py\n@@ -2 +2 @@\n-unused = 2\n+{payload}\n'
         first = grading.apply_diff(str(h.repo), spec, diff)
         assert first['applied'] and first['tests_pass'] is False, first
-    if 'abort' in payload and sys.platform.startswith('linux'):
+    signalled = {KILL: 137, ABORT.values[0]: 134}.get(payload)
+    if signalled and sys.platform.startswith('linux'):
         # bwrap's PID 1 reports a child's signal as a shell-style exit code.
-        assert first['exit_code'] == 134
-    elif 'abort' in payload:
+        assert first['exit_code'] == signalled
+    elif signalled:
         assert first['exit_code'] < 0
         assert 'signal' in first.get('detail', first.get('test_tail', ''))
 

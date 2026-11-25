@@ -188,6 +188,24 @@ def test_cleanup_after_sigint(h):
     assert not _alive(h.record()["child_pid"])
 
 
+def test_cleanup_after_sigint_when_sigint_was_inherited_as_ignored(h):
+    # A non-interactive shell starts background jobs with SIGINT ignored; cleanup must still run.
+    h.configure(mode="timeout")
+    proc = subprocess.Popen([sys.executable, BIN, "delegate", "--repo", str(h.repo), "--file", "src/a.py", "--",
+                             "task"], env=h.env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
+    for _ in range(100):
+        if h.record_path.exists():
+            break
+        time.sleep(0.1)
+    assert h.record_path.exists(), "fake agy never started"
+    staging = h.record()["cwd"]
+    proc.send_signal(signal.SIGINT)
+    proc.communicate(timeout=30)
+    assert proc.returncode == 130
+    assert not os.path.exists(staging) and h.leftovers() == []
+
+
 def test_cleanup_after_sigterm(h):
     h.configure(mode="timeout")
     proc = subprocess.Popen([sys.executable, BIN, "delegate", "--repo", str(h.repo), "--file", "src/a.py", "--",
@@ -703,3 +721,18 @@ def test_dry_run_with_an_agy_that_cannot_start_says_no_program_was_run(h):
 def test_diff_option_no_longer_exists(h):
     r = h.run("delegate", "--file", "src/a.py", "--diff", "HEAD~1..HEAD")
     assert r.returncode == 1 and "unrecognized" in r.stderr and not h.record_path.exists()
+
+
+def test_r1_dry_run_does_not_send_new_secret_file_names(h):
+    for name in (".dev.vars", ".vault-token", "id.ppk"):
+        (h.repo / name).write_text("x=1\n")
+        r = h.run("dry-run", "--file", name)
+        assert r.returncode == 4 and "R1" in r.stderr, (name, r.stdout, r.stderr)
+    r = h.run("dry-run", "--glob", "*", "--glob", ".*")
+    assert r.returncode == 0, r.stderr
+    manifest = r.stdout.split("agy command")[0]
+    assert "notes.md" in manifest
+    for name in (".dev.vars", ".vault-token", "id.ppk"):
+        assert name not in manifest, r.stdout
+        assert "FILES NOT SENT: %s (R1" % name in r.stdout
+    assert not h.record_path.exists()
