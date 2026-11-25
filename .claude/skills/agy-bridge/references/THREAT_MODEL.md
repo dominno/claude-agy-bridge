@@ -85,6 +85,24 @@ way), scans that buffer, and later writes that same buffer. A file changed after
 - The repo-local `.agy-bridge.json` can add deny rules and name context files; it cannot remove rules or execute commands.
 - Glob expansion walks the repo (denylisted folders are pruned, at most 100,000 files seen).
 
+## Remote agents (`delegate --remote-agent`)
+
+A remote delegation sends the same checked files, but to an agy remote agent in a Google-managed cloud environment
+through agy's interactive terminal UI (agy 1.5.17 has no `--print` for remote agents). New risks and what the bridge
+does about each:
+
+| Risk | Mitigation | Residual |
+|---|---|---|
+| The remote environment runs tools without asking (always-proceed); local `--settings` deny rules were observed **not** to apply there (a remote agent ran `uname -a` with `command(*)` denied) | The bridge passes no settings it cannot rely on. The prompt tells the model to use no tools and to answer only from the inlined files; a tool call shown on screen before the reply (`● Ran ...`) is counted (`remote.tool_lines` in the event) and printed as a warning | An instruction, not enforcement: the agent can run commands, browse the web (replies were seen with `Sources: github.com`) or read the remote project's attached sources |
+| The remote project may have GitHub repositories, Drive files or uploads attached, which the agent can read; uploads persist per project | The prompt forbids other sources. `--remote-project` selects the project; when agy reports the project as not found it falls back to the default project, so the bridge stops before pasting (exit 4) | The agent can still read attached sources; choose a project without sensitive attachments |
+| File text is pasted into a terminal: an escape sequence (for example the bracketed-paste end `ESC [201~`) could end the paste and type keystrokes or slash commands into agy | Files and the task are refused (exit 4) when they hold C0/C1 controls, a lone CR, DEL, bidi or invisible characters (`core.text.check_terminal_text`), in addition to the usual checks. The prompt starts with plain text, never `/` or `!` | None known |
+| The model's reply could fake the bridge's frame or a file delimiter | The file delimiter carries a random 10-character tag and the reply markers are formed from it; the prompt names them only as two halves, a file or task holding the tag is refused, and the reply is the text between the **last** begin marker and the following end marker | A model that copies the halves can still frame arbitrary text: the reply stays untrusted, and `--cite` checks quotes against the local bytes |
+| Screen-scraping misreads the answer (Markdown rendering drops `__`, `**`, backticks) | The model is asked for one fenced code block, which agy shows verbatim; a VT emulator with scrollback rebuilds the screen; `--cite` verifies every quote against the local staged buffer | Long lines are kept on one row up to 1000 columns; a reply line longer than that is wrapped by agy |
+| The local working folder would become the remote workspace | agy runs in a new empty 0700 temporary folder, never the repository; the folder-trust question is answered only for that folder; the five-name environment (with `TERM=xterm-256color`) is used | — |
+| Prompt contents in `ps` or the argv length limit | The prompt is pasted with bracketed paste; the command line is only `agy --remote-agent [--project P] [--model M]` | — |
+| An interactive login waits forever | Login screens, "not signed in" and sign-in URLs end the run at once (exit 11). `agy models` runs first to renew an expired token (the UI was seen showing its login screen with a token that `agy models` then renewed) | — |
+| The remote conversation is kept | Not deleted by the bridge (agy offers deletion only in its `/resume` list). The account allows a few running environments (5 observed); a run over the limit fails with exit 10 and says so | Conversation text (including the inlined files) stays in the remote project until the user deletes it |
+
 ## Fixed example fragments, never arbitrary scan bypasses
 `--allow-fragment-file` is explicit and applies only to selected file contents. Its file must be inside the
 validated repo, must pass the built-in and extra path denylist, and is read once using the same pinned root and

@@ -42,6 +42,9 @@ def _delegate(sub) -> None:
         d.add_argument("--max-file-bytes", type=int, default=config.MAX_FILE_BYTES)
         d.add_argument("--max-out-bytes", type=int, default=config.MAX_OUT_BYTES)
         d.add_argument("--out", help="write the full answer here (temp folder or <repo>/.agy-bridge/)")
+        d.add_argument("--remote-agent", action="store_true",
+                       help="run the task on an agy remote agent (Google cloud); the files are inlined in the prompt")
+        d.add_argument("--remote-project", help="with --remote-agent: remote project name or ID (default: agy's)")
         if name == "delegate":
             d.add_argument("--dry-run", action="store_true", help="show what would be sent and stop")
         d.add_argument("task", nargs="*", help='put the task after "--"')

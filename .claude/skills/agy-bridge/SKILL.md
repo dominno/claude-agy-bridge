@@ -23,9 +23,9 @@ the user's project folder, not the skill folder. Documents named below are in `r
 |---|---|---|
 | `doctor` | Read-only health check: agy on PATH, version, log file mode | no |
 | `dry-run` | Shows the manifest and agy command line a delegation would use | no |
-| `delegate` | Hands one bounded, read-only task to agy and reads back a text answer | yes, after the user confirms |
+| `delegate` | Hands one bounded, read-only task to agy (locally, or with `--remote-agent` to a Google cloud agent) and reads back a text answer | yes, after the user confirms |
 | `queue` | Adds, runs, watches, cancels or reports read-only queued jobs | yes, after the user confirms |
-| `implement` | Starts an edit job on an isolated copy (Linux), reviews and applies its patch | yes, after the user confirms |
+| `implement` | Starts an edit job on an isolated copy (Linux or macOS), reviews and applies its patch | yes, after the user confirms |
 | `jobs` | Lists implementation jobs and the repository's queue; cleans up on request | no |
 | `status` | Shows the watcher, queue counts and results awaiting a verdict | no |
 
@@ -95,6 +95,22 @@ The selected file contents are sent to Google through agy. Say so to the user if
 - Read the last records with `"<skill>/scripts/agy-bridge" events --repo <absolute project root> --tail 10`.
 
 Options, exit codes and notices: [CLI reference](references/CLI.md).
+
+### Remote agent (`--remote-agent`)
+
+Add `--remote-agent [--remote-project <name or ID>]` to both the dry run and the delegate call to run the task on an
+agy remote agent in a Google-managed cloud environment instead of the local agy. Use it only when the user asks for
+it. Before confirming, tell the user:
+- the selected files are pasted, in full, into the prompt (the remote agent cannot see local files); the same
+  denylist, content scan and size limits apply, and files with terminal control or invisible characters are refused;
+- the remote environment runs tools without asking (always-proceed); "use no tools, answer only from these files"
+  is an instruction to the model, not something the bridge can enforce, and the remote project's attached sources
+  (GitHub repositories, Drive files, uploads) are reachable by that agent;
+- the conversation stays in the remote project; the bridge does not delete it, and the account has a limit of
+  running remote environments (exit 10 with a message when it is reached; wait or delete old conversations).
+It needs agy 1.5.17 or later and a Google sign-in (API-key sign-in is not supported). The bridge drives agy's
+interactive terminal UI on a pseudo-terminal in a new empty folder, because agy does not support `--print` for
+remote agents yet. `--cite`/`--require-verified` work as usual. `doctor` reports whether this agy offers it.
 
 ## queue
 

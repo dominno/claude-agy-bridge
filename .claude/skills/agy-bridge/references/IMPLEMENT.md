@@ -210,5 +210,11 @@ Google's [Remote Control](https://antigravity.google/docs/remote-control/?tab=cl
 session on a running host through a browser. [Remote Agents](https://antigravity.google/docs/remote-agents?tab=cli)
 runs in the cloud, using the sources attached to a remote project. An unavailable project identifier can cause
 the CLI to open the default project. Check the selected project before entering a task. Remote Agents does not
-support `--print`. Both modes require Google Account sign-in. The bridge's current integration uses the local
-worker. [AGY sign-in change](https://github.com/google-antigravity/antigravity-cli/releases/tag/1.5.12).
+support `--print`. Both modes require Google Account sign-in. `implement` uses the local worker (Linux or macOS).
+
+For **read-only** tasks the bridge can use Remote Agents: `delegate --remote-agent [--remote-project NAME]` (also on
+`dry-run`) inlines the checked files into the prompt, drives agy's terminal UI on a pseudo-terminal from an empty
+folder and reads the framed reply off the screen. It refuses to paste when agy reports the requested project as not
+found. Editing on a remote agent is not supported: the remote environment runs tools without asking, and there is no
+patch channel back that the bridge could check. See [CLI.md](CLI.md#remote-agent) and the remote-agent section of
+[THREAT_MODEL.md](THREAT_MODEL.md). [AGY sign-in change](https://github.com/google-antigravity/antigravity-cli/releases/tag/1.5.12).

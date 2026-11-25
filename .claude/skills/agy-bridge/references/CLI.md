@@ -4,7 +4,8 @@
 scripts/agy-bridge delegate --repo <root> --file <path>... [--glob <pattern>...] [--model <name>]
                         [--timeout 5m] [--max-bytes N] [--max-file-bytes N] [--max-out-bytes N] [--out <file>]
                         [--cite [--require-verified]] [--allow-fragment-file <path>]
-                        [--allow-non-git-root] [--dry-run] -- "<task>"
+                        [--allow-non-git-root] [--remote-agent [--remote-project <name|ID>]]
+                        [--dry-run] -- "<task>"
 scripts/agy-bridge dry-run  (same arguments without --dry-run; prints the manifest and the agy command, sends nothing)
 scripts/agy-bridge doctor   [--repo <root>] [--offline]
 scripts/agy-bridge doctor --implementation --profile <absolute path> [--repo <root>]
@@ -15,6 +16,48 @@ scripts/agy-bridge events   [--repo <root>] [--tail N]
 before it exits), prints the manifest and the `agy` command line, and runs `agy --version` with the five-name
 environment in an empty folder. That is the only program a dry run starts; delegation never runs git. No file
 contents and no task text go to `agy`. To have a diff reviewed, pass the changed source files with `--file`.
+
+## Remote agent
+
+`--remote-agent` runs the task on an agy remote agent (a Google-managed cloud environment) instead of the local agy;
+`--remote-project` picks the remote project by name or ID (default: agy's "CLI Project (<hostname>)"). It needs agy
+1.5.17 or later and a Google sign-in. agy 1.5.17 refuses `--print`, stream-json and ACP for remote agents, so the
+bridge drives the interactive terminal UI:
+
+1. Files are selected and checked exactly as for a local delegation (denylist, content scan, size limits, invisible
+   Unicode). Because the text is pasted into a terminal, files or a task holding terminal control, bidi or
+   invisible characters are refused (exit 4). Nothing is written to a staging folder.
+2. The prompt holds the rules ("use no tools; answer only from these files"), every file inlined between
+   `----- BEGIN FILE "<path>" [<tag>] -----` and `----- END FILE ... -----` lines (the random tag keeps file text
+   from faking a delimiter), the task (with the `--cite` instruction) and a reply frame: the model is asked to put
+   its answer in one fenced code block between two marker lines, which the prompt names only as two halves to join
+   (the program echoes the prompt, so a literal marker would match the echo).
+3. `agy` first runs `models` (no prompt, no files) to renew an expired sign-in token, then `agy --remote-agent
+   [--project P] [--model M]` starts on a 50x1000 pseudo-terminal in a new empty 0700 folder (never the
+   repository) with the five-name environment and `TERM=xterm-256color`. The bridge answers terminal queries,
+   accepts the folder-trust question for that empty folder only, waits for the input line (`? for shortcuts`) and
+   pastes the prompt with bracketed paste (never on the command line, so it is not visible in `ps` and has no
+   argv size limit), then presses Enter.
+4. A VT screen emulator with scrollback rebuilds the screen (the reply is drawn with cursor movement, so stripping
+   escapes is lossy). The turn is complete when the end marker follows the begin marker and the status line has
+   been idle (no `esc to cancel`) for a second; the reply between the markers is the answer. The bridge then stops
+   agy's process group. The remote conversation remains in the remote project.
+
+`--cite`, `--require-verified`, `--out`, `--max-out-bytes` (applied to the extracted reply), `--model` and
+`--timeout` work as for a local delegation. `dry-run --remote-agent` prints the manifest, the remote command and the
+prompt size, and starts no program. The event record gains `remote: {project, failure, tool_lines}`; a non-zero
+`tool_lines` (the screen showed a tool call such as `● Ran (...)` before the reply) also prints a warning.
+
+| Remote failure | Exit |
+|---|---|
+| login screen, "not signed in", a sign-in URL | 11 (fails at once; never waits for an interactive login) |
+| cloud conversations not enabled, remote agents unavailable, model not available for remote conversations, agy older than 1.5.17 | 14 |
+| quota or rate limit; "limit of 5 running environments" (each remote run keeps an environment alive for a while) | 10 |
+| agy reports the `--remote-project` as not found (it would fall back to the default project); nothing is pasted | 4 |
+| no reply within `--timeout` | 12 |
+| begin marker without end marker, reply over `--max-out-bytes` | 16 |
+| agy exited, the UI never became ready, Enter did not start a turn, sending failed | 2 |
+| finished with no framed reply | 3 |
 
 Queue commands are in [QUEUE.md](QUEUE.md). See [GRADING.md](GRADING.md) for `verdict`, `verdicts`, `grade-mutants`,
 `apply-diff` and `stats`. `scripts/agy-bridge <command> --help` lists the options; the path is relative to the skill

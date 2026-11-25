@@ -26,6 +26,11 @@ or have no known shape, or confidential text that is not a secret. Answers come 
 never run. The confirmation step is an instruction to Claude; the permission prompt is the hard stop.
 [What is checked and what is not](.claude/skills/agy-bridge/references/THREAT_MODEL.md).
 
+With `delegate --remote-agent` the same checked files are pasted, in full, into the prompt of an agy **remote
+agent** that runs in a Google-managed cloud environment. That environment runs tools without asking and can read the
+remote project's attached sources; the bridge tells the model to use no tools and only the given files, but cannot
+enforce it, and the conversation stays in the remote project.
+
 ## Requirements
 
 - macOS or Linux, Python 3.9 or newer. [Claude Code](https://claude.com/claude-code) or Codex for the skill; the
@@ -105,7 +110,7 @@ The first word after `/agy-bridge` (or `$agy-bridge`) picks the action.
 |---|---|---|
 | `doctor` | Read-only health check | no |
 | `dry-run` | Shows what a delegation would send | no |
-| `delegate` | Hands one task to `agy` and returns the answer | yes, after you confirm |
+| `delegate` | Hands one task to `agy` (locally, or to a cloud remote agent with `--remote-agent`) and returns the answer | yes, after you confirm |
 | `queue` | Adds, runs, watches or cancels queued read-only jobs | yes, after you confirm |
 | `implement` | Starts an edit job on an isolated copy, returns a job ID | yes, after you confirm |
 | `jobs` | Lists implementation jobs and a repository's queue; cleans up old jobs on request | no |

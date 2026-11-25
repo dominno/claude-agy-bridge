@@ -70,6 +70,23 @@ A smaller check, with one fake file in a scratch repository: `doctor --offline` 
 `gemini-3.8-flash-low` returned a correct answer in 10 s. The permission probes above (C7, C10, C11) were **not** repeated
 on this version.
 
+## Measured on agy 1.5.17: remote agents (2026-11-25, one Mac, one Google AI Pro account)
+
+- `agy --remote-agent -p` exits 2 ("does not support --print yet"); stream-json and ACP are unavailable too. Only
+  the terminal UI works. The remote conversation is not stored locally and the answer is not in `--log-file`.
+- The UI asks whether to trust the folder, then shows `? for shortcuts` when idle and `esc to cancel` while
+  working. Bracketed paste of a multi-line prompt (with inlined files) and Enter start a turn; `-i "<prompt>"` also
+  works but puts the prompt on the command line, so the bridge pastes.
+- Replies are rendered as Markdown (`__init__` became `init`); text inside a fenced code block is shown verbatim,
+  indented. With a 1000-column terminal, citation lines stay on one row. Long replies scroll into the scrollback.
+- With `--settings` denying `command(*)`, the remote agent still ran `uname -a`: local settings do not bind it.
+- An unknown `--project` shows "Project Not Found ... using this machine's default remote project".
+- After several runs within minutes: "Reached the limit of 5 running environments"; it cleared after some minutes.
+- Once the UI showed its login screen ("You are currently not signed in") with an expired token that `agy models`
+  then renewed; the bridge runs `agy models` before the UI for that reason.
+- Real runs of `delegate --remote-agent --cite --require-verified` returned only VERIFIED lines for one file, two
+  files and a 23-line answer. Other accounts, plans and versions stay unverified.
+
 ## Summary for the README
 
 The test suite uses a fake `agy`. The bridge has been run against the real `agy` 1.4.3 (2026-10-20, fake files

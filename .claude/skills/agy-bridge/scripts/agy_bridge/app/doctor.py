@@ -11,6 +11,7 @@ from typing import List
 from ..core import config, rootcheck, stage
 from ..core.config import UsageError
 from ..port import edit_sandbox, model_runner
+from . import remote_delegation
 from .console import fail, refused, say
 
 
@@ -37,6 +38,7 @@ def health(repo, offline) -> int:
                     line(True, "agy version", "%d.%d.%d is a known major (still unverified)" % version)
                 except model_runner.UnsupportedAgy as exc:
                     line(False, "agy version", str(exc), config.EXIT_UNSUPPORTED)
+                say(remote_delegation.capability(exe, env, tmp, version))
                 if offline:
                     say("skip agy models: --offline")
                 else:

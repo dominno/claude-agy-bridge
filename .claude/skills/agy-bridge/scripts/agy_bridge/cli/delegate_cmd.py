@@ -16,7 +16,8 @@ def cmd_delegate(args) -> int:
         allow_fragment_file=args.allow_fragment_file, timeout=args.timeout,
         allow_non_git_root=args.allow_non_git_root, max_bytes=args.max_bytes,
         max_file_bytes=args.max_file_bytes, max_out_bytes=args.max_out_bytes, out=args.out,
-        dry=args.command == "dry-run" or getattr(args, "dry_run", False), save_large_answer=True)
+        dry=args.command == "dry-run" or getattr(args, "dry_run", False), save_large_answer=True,
+        remote=args.remote_agent, remote_project=args.remote_project)
     result = delegation.execute(request)
     for line in result.preview:
         say(line)
