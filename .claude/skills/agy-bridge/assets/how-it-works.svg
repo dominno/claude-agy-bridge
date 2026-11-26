@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1836" viewBox="0 0 1200 1836" role="img" aria-labelledby="title description">
   <title id="title">agy-bridge workflow for Claude Code</title>
-  <desc id="description">Inspect the selected files, confirm the manifest and pass the permission prompt before anything is sent to Google. Delegate returns an untrusted read-only answer that you check and record a verdict on; the queue runs read-only jobs in order and can be watched or cancelled. Delegate runs locally or, with --remote-agent, on a Google cloud agent that gets the checked files inside the prompt. Implement edits an isolated copy on Linux with Bubblewrap 0.8.0 or later or on macOS with sandbox-exec, can rerun offline tests and resume, and exports a patch for explicit application. Secrets, links, binaries and invisible Unicode are never sent. Graders run model-written code only inside an OS sandbox. Jobs list and ps show active work.</desc>
+  <desc id="description">Inspect the selected files, confirm the manifest and pass the permission prompt before anything is sent to Google. Delegate returns an untrusted read-only answer that you check and record a verdict on; the queue runs read-only jobs in order (locally or, with "remote": true, on a cloud agent) and can be watched or cancelled. Delegate runs locally or, with --remote-agent, on a Google cloud agent that gets the checked files inside the prompt. Implement edits an isolated copy on Linux with Bubblewrap 0.8.0 or later or on macOS with sandbox-exec, can rerun offline tests and resume, and exports a patch for explicit application. Secrets, links, binaries and invisible Unicode are never sent. Graders run model-written code only inside an OS sandbox. Jobs list and ps show active work.</desc>
   <defs>
     <marker id="down" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M0 0 10 5 0 10Z" fill="#64748b"/>
@@ -81,7 +81,7 @@
     <text x="76" y="1180" font-family="DejaVu Sans Mono, monospace" font-size="15" fill="#1e3a5f">/agy-bridge queue add · run · watch --detach · cancel</text>
     <text x="76" y="1208" font-size="18" fill="#334155">A running watcher sends a new job at once.</text>
     <text x="76" y="1234" font-size="18" fill="#334155">/agy-bridge status shows progress and results.</text>
-    <text x="76" y="1264" font-size="16" fill="#475569">macOS or Linux</text>
+    <text x="76" y="1264" font-size="16" fill="#475569">macOS or Linux · "remote": true runs a job on a cloud agent</text>
 
     <rect x="643" y="1106" width="467" height="38" rx="7" fill="#183e37"/>
     <text x="657" y="1131" font-family="DejaVu Sans Mono, monospace" font-size="16" fill="#f2fffb">jobs apply &lt;job&gt; --sha256 &lt;hash&gt;</text>

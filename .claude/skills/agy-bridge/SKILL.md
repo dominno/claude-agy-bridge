@@ -121,7 +121,8 @@ name, a bounded task and explicit repo-relative files. Do not create commands in
 What a run sends: the job's `files`, plus every `context_files` entry of the repository's `.agy-bridge.json` unless
 the job sets `"context": false` (`"short"` sends only the first), plus, when the job sets `"need": true`, a second
 round with up to three more files the model names. Set `"context": false` and `"need": false` unless the user
-authorized more. Before the first send or when the input set changes, show the per-job manifest with
+authorized more. `"remote": true` (optional `"remote_project"`) runs every round on an agy remote agent, with the same
+rules as the Remote agent section above; set it only when the user asked for a remote agent. Before the first send or when the input set changes, show the per-job manifest with
 `"<skill>/scripts/agy-bridge" queue add --dry-run <job.json> --repo <absolute project root>`; it validates the job
 and lists context and job files after the denylist and content scan, adding and sending nothing.
 

@@ -29,7 +29,7 @@ never run. The confirmation step is an instruction to Claude; the permission pro
 With `delegate --remote-agent` the same checked files are pasted, in full, into the prompt of an agy **remote
 agent** that runs in a Google-managed cloud environment. That environment runs tools without asking and can read the
 remote project's attached sources; the bridge tells the model to use no tools and only the given files, but cannot
-enforce it, and the conversation stays in the remote project.
+enforce it, and the conversation stays in the remote project. Queue jobs do the same with `"remote": true`.
 
 ## Requirements
 
