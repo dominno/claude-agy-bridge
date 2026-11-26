@@ -124,4 +124,4 @@ macOS policy on darwin. The job inventory is a local filesystem read and works w
 `doctor --implementation --profile <absolute path>` to test AGY version and sandbox startup without a model call.
 An authenticated edit and resume with real AGY on a Linux host with working Bubblewrap user namespaces remains to be
 measured. To record the AGY version, actual file changes, check result, and resume behavior, use the
-[implementation acceptance test](MANUAL_TEST.md#14-check-implementation-on-linux).
+[implementation acceptance test](MANUAL_TEST.md#15-check-implementation-on-linux-or-macos).

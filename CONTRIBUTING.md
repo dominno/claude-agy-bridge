@@ -10,7 +10,7 @@ python3 -m venv .venv
 
 The full suite takes several minutes and runs offline against a fake `agy` (`tests/fake_agy/agy`). No account is needed.
 Use `.venv/bin/pip install .` to test the installed `agy-bridge` command and `python -m agy_bridge` entry point in
-the virtual environment. Use [the Linux implementation acceptance test](.claude/skills/agy-bridge/references/MANUAL_TEST.md#14-check-implementation-on-linux)
+the virtual environment. Use [the Linux implementation acceptance test](.claude/skills/agy-bridge/references/MANUAL_TEST.md#15-check-implementation-on-linux-or-macos)
 to verify a real authenticated edit and resume.
 `AGY_BRIDGE_HOME` moves the log directory only while the test suite runs (it creates a marker file
 `.claude/skills/agy-bridge/scripts/agy_bridge/_test_mode`); in normal use the variable is ignored.

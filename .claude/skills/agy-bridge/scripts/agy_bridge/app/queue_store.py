@@ -20,6 +20,7 @@ from ..core.queue_job import (JOB_FIELDS, MAX_JOB_BYTES, MAX_RESULT_BYTES, MAX_S
                               RESULT_FORMAT, RESULT_WARNING, _display_name, _interrupted, refusal_text)
 from ..core.verdict import name as job_name
 from ..port import safety
+from . import remote_delegation
 
 
 def _owned_regular(info, links):
@@ -88,7 +89,22 @@ def validate(root, job):
         raise config.UsageError('cite must be a boolean')
     if 'context' in job and not (type(job['context']) is bool or job['context'] == 'short'):
         raise config.UsageError('context must be true, false or short')
+    _validate_remote(job)
     return job
+
+
+def _validate_remote(job):
+    if 'remote' in job and type(job['remote']) is not bool:
+        raise config.UsageError('remote must be a boolean')
+    project = job.get('remote_project')
+    if project is None:
+        return
+    if not isinstance(project, str) or not job.get('remote'):
+        raise config.UsageError('remote_project must be text and needs "remote": true')
+    try:
+        remote_delegation.validate_project(project)
+    except config.UsageError:
+        raise config.UsageError('remote_project must be a printable project name or ID') from None
 
 
 def context_files(root, job):

@@ -5,7 +5,7 @@ fake one. The goal is to answer the questions in `COMPAT.md` (C1–C17) and to c
 safety rules hold.
 
 Sections 0–13 cover read-only delegation. For the Linux edit worker, start at
-[section 14](#14-check-implementation-on-linux).
+[section 15](#15-check-implementation-on-linux-or-macos).
 
 **Read this first.**
 - `agy` sends what it reads to Google. Use only fake files in this test.
@@ -228,7 +228,21 @@ Sign out of `agy` (`agy` has a logout or sign-out command; check `agy --help`), 
 are done (System Settings → Users & Groups, "Delete the home folder"). As your main user:
 `rm -rf /tmp/agy-bridge-review`.
 
-## 14. Check implementation on Linux
+## 14. Remote agent (optional, Google AI Pro or Ultra)
+
+Remote agents run in Google's cloud; send only synthetic files. With the test repository from section 3:
+
+```sh
+agy-bridge dry-run --remote-agent --repo ~/agy-test-repo --file src/calc.py -- 'Review calc.py'
+agy-bridge delegate --remote-agent --repo ~/agy-test-repo --file src/calc.py --cite --require-verified \
+  --out ~/agy-test-repo/.agy-bridge/delegate/remote1.md -- 'List up to 3 possible bugs, each with a citation.'
+```
+
+Expect exit 0 and only VERIFIED citations. Repeat as a queue job with `"remote": true` in the job JSON
+(`queue add`, then `queue run`). Check failure handling: `--remote-project 'No Such Project'` must exit 4 and send
+nothing. Afterwards delete the test conversations in agy (`agy --remote-agent`, `/resume`).
+
+## 15. Check implementation on Linux or macOS
 
 Use a disposable Linux user or VM, Git, Python, AGY CLI 1.5.16 or later in major version 1, and Bubblewrap 0.8.0 or
 later (`bwrap --version`; Ubuntu 22.04 ships 0.6.x, Debian 12+/Ubuntu 24.04+ qualify) with unprivileged user

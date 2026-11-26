@@ -125,6 +125,11 @@ to agy's default; `timeout` defaults to `5m` (integer seconds or delegate durati
 verified (exit 17). Structured reports can use false: their non-citation lines are visibly annotated.
 `context` defaults to true and can also be false or `"short"`. `need` is a boolean, default false; only
 `"need": true` authorizes the model to request additional files for a second round.
+`remote` is a boolean, default false; `"remote": true` runs every round of the job on an agy remote agent in
+Google's cloud, exactly like `delegate --remote-agent` (files inlined in the prompt, same checks and failure exits,
+see [CLI.md](CLI.md#remote-agent)). `remote_project` (text, only with `"remote": true`) picks the remote project by
+name or ID. `queue add --dry-run` prints `remote agent: yes|no`. Remote rounds count against the account's limit
+of running remote environments (exit 10 when reached).
 
 ## Folders and config
 

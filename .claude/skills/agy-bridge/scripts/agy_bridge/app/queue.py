@@ -64,21 +64,24 @@ def preview(paths, job):
             'job files: ' + ', '.join(stage.printable(f) for f in job['files']),
             'NEED round: ' + ('yes, up to 3 more files the model names may be sent in round 2'
                               if job.get('need', False) else 'no'),
-            'name: ' + ('already used; queue add will refuse it' if exists else 'free')]
-    request = DelegationRequest(
-        repo=paths.root, task=job['task'], files=files, model=job.get('model'), cite=True,
+            'name: ' + ('already used; queue add will refuse it' if exists else 'free'),
+            'remote agent: ' + (('yes, project ' + stage.printable(job['remote_project'])
+                                 if job.get('remote_project') else 'yes, default remote project')
+                                if job.get('remote') else 'no')]
+    return head, execute(_request(paths.root, job, files, job['task'], paths.allow, dry=True))
+
+
+def _request(root, job, files, task, allow, dry=False):
+    """The delegation one queue round runs: the job's model, citations, timeout and (optional) remote agent."""
+    return DelegationRequest(
+        repo=root, task=task, files=files, model=job.get('model'), cite=True,
         require_verified=job.get('cite', False), timeout=str(job.get('timeout', '5m')),
-        allow_non_git_root=paths.allow, dry=True)
-    return head, execute(request)
+        allow_non_git_root=allow, dry=dry, remote=job.get('remote', False),
+        remote_project=job.get('remote_project'))
 
 
 def attempt(root, job, files, task, allow=False):
-    request = DelegationRequest(
-        repo=root, task=task, files=files, model=job.get('model'), cite=True,
-        require_verified=job.get('cite', False), timeout=str(job.get('timeout', '5m')),
-        allow_non_git_root=allow,
-    )
-    return execute(request).as_queue_record()
+    return execute(_request(root, job, files, task, allow)).as_queue_record()
 
 
 

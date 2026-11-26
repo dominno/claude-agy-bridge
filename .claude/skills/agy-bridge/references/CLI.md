@@ -19,6 +19,9 @@ contents and no task text go to `agy`. To have a diff reviewed, pass the changed
 
 ## Remote agent
 
+Queue jobs use the same mode with `"remote": true` (and optional `"remote_project"`) in the job JSON; see
+[QUEUE.md](QUEUE.md).
+
 `--remote-agent` runs the task on an agy remote agent (a Google-managed cloud environment) instead of the local agy;
 `--remote-project` picks the remote project by name or ID (default: agy's "CLI Project (<hostname>)"). It needs agy
 1.5.17 or later and a Google sign-in. agy 1.5.17 refuses `--print`, stream-json and ACP for remote agents, so the

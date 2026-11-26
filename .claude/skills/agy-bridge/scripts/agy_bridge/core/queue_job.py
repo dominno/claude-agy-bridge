@@ -21,7 +21,7 @@ RESULT_FORMAT = '<!-- agy-bridge-result-v2 -->'
 REFUSAL_FORMAT = '<!-- agy-bridge-refusal-v1 sent: %s -->'
 RESULT_CHECKSUM = '\n<!-- agy-bridge-result-sha256: '
 
-JOB_FIELDS = ('name', 'model', 'task', 'files', 'timeout', 'cite', 'context', 'need')
+JOB_FIELDS = ('name', 'model', 'task', 'files', 'timeout', 'cite', 'context', 'need', 'remote', 'remote_project')
 MAX_SHOWN_FIELDS = 10
 
 

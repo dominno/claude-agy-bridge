@@ -25,6 +25,8 @@
   one), the running-environment limit, timeouts and a missing end marker fail fast with their own messages and
   the usual exit codes. A tool call shown before the reply is counted in the event record and printed as a warning.
   Needs agy 1.5.17+; `doctor` reports whether agy offers remote agents, without network or sign-in.
+- Queue jobs accept `"remote": true` and `"remote_project"` to run every round on an agy remote agent, like
+  `delegate --remote-agent`; `queue add --dry-run` shows the choice. Verified end to end with a real remote queue job.
 - `port/process.py` gains `spawn_pty`, which starts a program on a new pseudo-terminal as its controlling terminal.
 
 ### Fixed
