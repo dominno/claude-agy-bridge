@@ -31,6 +31,8 @@
 
 ### Fixed
 
+- Docs: Linux `implement` is now verified end to end with real AGY 1.5.18 on Debian 12 / Bubblewrap 0.8.0 (edit,
+  check, cancel, resume, apply, exfiltration and sandbox probes); container settings for Bubblewrap documented.
 - `doctor --implementation` and `jobs start` no longer refuse a dedicated profile after AGY's first run: AGY 1.5.17
   writes `.gemini/config` on its first start. The profile check now accepts exactly AGY's defaults there and still
   refuses MCP servers, other plugins, extra files or a changed default project.

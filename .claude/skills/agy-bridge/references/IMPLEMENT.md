@@ -14,6 +14,8 @@ a task. [Recorded compatibility and evidence](COMPAT.md).
 - **Linux:** Bubblewrap 0.8.0 or later (the sandbox passes `--disable-userns`; Ubuntu 22.04 ships 0.6.x, and Debian 11
   and RHEL 9 also ship older versions; Debian 12+/Ubuntu 24.04+ qualify) in `/usr/bin` or `/bin` and working
   unprivileged user namespaces. Use a Linux host or VM with working user namespaces if your container disables them.
+  In Docker, Bubblewrap needs `--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt
+  systempaths=unconfined` (the default profile blocks namespaces and masks `/proc`); a VM avoids that.
   AGY sees the tree at `/workspace` and the profile at `/home/agy`.
 - **macOS:** `/usr/bin/sandbox-exec` (part of macOS; measured on macOS 13 with AGY 1.5.17). AGY runs under a
   generated default-deny Seatbelt policy with its real paths: `HOME` is the dedicated profile, the working directory

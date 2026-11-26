@@ -169,7 +169,7 @@ A detached watcher keeps running the code it started with. Before updating or un
 Version 0.3.0. The test suite uses a fake `agy`; the bridge has been run once against the real `agy` 1.4.3 with
 fake files only, and a basic delegation also worked on 1.4.12. Authenticated end-to-end implementation jobs (edit,
 offline check, resume, apply) were run on macOS 13 with AGY 1.5.17 and a signed-in dedicated profile (synthetic
-files); the Linux Bubblewrap path has offline coverage only. [What was measured](.claude/skills/agy-bridge/references/COMPAT.md).
+files), and on Linux (Debian 12, Bubblewrap 0.8.0) with AGY 1.5.18, including cancel and resume. [What was measured](.claude/skills/agy-bridge/references/COMPAT.md).
 
 ## Documentation
 
