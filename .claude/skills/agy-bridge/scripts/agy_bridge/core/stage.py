@@ -18,7 +18,7 @@ from .config import UsageError
 from .denylist import is_denied
 from .scan import EXAMPLE_FRAGMENTS, first_hit_line, scan_bytes
 # The staging API other layers use. Each name lives in the module that owns it; patch it there.
-from .refusal import Refusal, Refused  # noqa: F401
+from .refusal import Refusal, Refused, SymlinkInPath  # noqa: F401
 from .rootcheck import check_root, resolve_repo  # noqa: F401
 from .staging import RULE_LINE, TASK_NAME, Staging, materialize, sweep_old_staging, task_file_text  # noqa: F401
 from .text import (check_terminal_text, escape_for_terminal, escape_invisible, printable,  # noqa: F401
@@ -71,6 +71,8 @@ def explain(exc: BaseException, operation: str) -> List[str]:
     if isinstance(exc, Refused):
         return (["%s refused by a rule (%d problem(s)):" % (operation, len(exc.refusals))]
                 + ["  - " + describe(item) for item in exc.refusals])
+    if isinstance(exc, SymlinkInPath):
+        return [symlink_message(operation, exc.component, exc.resolved, exc.hint)]
     if isinstance(exc, OSError):
         where = ""
         for name in (exc.filename, exc.filename2):
@@ -89,6 +91,27 @@ def explain(exc: BaseException, operation: str) -> List[str]:
 
 
 
+def _shown(path: str) -> str:
+    return ("[redacted key-shaped path]" if scan_bytes(path.encode("utf-8", "replace")) else printable(path))
+
+
+def symlink_message(operation: str, component: str, resolved: str, hint: str = "") -> str:
+    """One line naming the symlinked component, that it was refused, and the fixes (no link is ever followed)."""
+    # "<operation> refused: ..." keeps the "<operation> " prefix every other refusal line starts with.
+    return ('%s refused: path component "%s" is a symbolic link; pass the resolved path (%s)%s'
+            % (operation, _shown(component), _shown(resolved), (" or " + hint) if hint else ""))
+
+
+def resolved_inside(raw: str, roots: Sequence[str]) -> Optional[str]:
+    """For an absolute path outside every root as written: its resolved form when that lies inside a root (a
+    symlinked component such as macOS /tmp -> /private/tmp), else None. Used for messages only."""
+    real = os.path.realpath(raw)
+    for root in roots:
+        if real == root or real.startswith(root.rstrip(os.sep) + os.sep):
+            return real
+    return None
+
+
 def _relative(raw: str, roots: Sequence[str]) -> Tuple[Optional[str], Optional[Refusal]]:
     """Turn a user path into a clean relative path, or a refusal."""
     if "\0" in raw or not raw.strip():
@@ -100,6 +123,10 @@ def _relative(raw: str, roots: Sequence[str]) -> Tuple[Optional[str], Optional[R
                 raw = os.path.relpath(norm, root)
                 break
         else:
+            real = resolved_inside(norm, roots)
+            if real is not None:
+                return None, Refusal("R6", "path is outside the repository as written: a component is a symbolic "
+                                     "link (refused); pass the resolved path (%s)" % _shown(real), raw)
             return None, Refusal("R6", "path is outside the repository", raw)
     parts = [p for p in raw.split(os.sep) if p not in ("", ".")]
     if ".." in parts:

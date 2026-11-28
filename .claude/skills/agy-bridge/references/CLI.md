@@ -194,6 +194,22 @@ content, see [THREAT_MODEL.md](THREAT_MODEL.md)) adds the one-based line of the 
 glob directory is listed as pruned; its children are not inspected. Explicit refusals still stop the whole task, with
 other selected files labelled `TASK: whole delegation was not sent`. Missing files keep exit 1; rule refusals keep exit 4.
 
+## Symbolic links in paths
+
+Every path the bridge opens is walked component by component without following symbolic links, so a symlinked
+component is refused, never followed. The refusal names the component and the fix, for example on macOS, where
+`/tmp` is a link to `/private/tmp`:
+
+```text
+agy-bridge: queue add refused: path component "tmp" is a symbolic link; pass the resolved path (/private/tmp/x/job.json) or the job on stdin: agy-bridge queue add - --repo /path/to/repo
+```
+
+`--repo` itself is resolved, so an absolute `--file`, `--queue-dir` or `--results-dir` written through a link (for
+`/tmp/repo/notes.md` when the repository resolves to `/private/tmp/repo`) is outside the repository as written; it
+is refused with `path is outside the repository as written: a component is a symbolic link (refused); pass the
+resolved path (...)`. Pass repository-relative paths or the resolved absolute path. `--out` is accepted only in the
+temp folder (the R8 message names it, for example `/private/var/folders/.../T`) or under `<repo>/.agy-bridge/`.
+
 ## Example fragments
 
 `--allow-fragment-file <path>` reads a small UTF-8 file inside the repo, one literal per line (minimum 12
@@ -216,10 +232,27 @@ sent. Other literals are rejected without echoing them. See [the threat model](T
 FILE: src/example.py | QUOTE: "verbatim text, max 25 words" | CLAIM: the model's interpretation
 ```
 
+A second form is recognised too, for tasks that prescribe it (agy-bridge 0.4.0 and later):
+
+```text
+QUOTE: verbatim text, max 25 words AT: src/example.py:12
+```
+
+The path after the last ` AT: ` must be one of the sent files; `:<line>` is optional. One pair of surrounding `"`
+or backticks around the quote is dropped. The quote is verified exactly like the first form. The line number is
+advisory: a quote that exists in the file but not on that line stays VERIFIED with reason
+`quote exists; not on line N`.
+
 Every returned line is labelled VERIFIED or UNVERIFIED, with counts and reasons. Verification checks only that
 the whitespace-normalised quote occurs in that exact sent file buffer. It never verifies CLAIM. Malformed
 lines, quotes shorter than 8 normalised characters or over 25 words, unavailable files and absent quotes are
-unverified. Trailing blank lines are ignored; other lines remain visible even for long answers.
+unverified.
+
+A task that prescribes its own line format silently loses citation checking: every line in another format is
+`UNVERIFIED (malformed citation line)`. When the task text contains a `QUOTE:`, `AT:` or `FILE:` directive,
+`delegate --cite`, `dry-run --cite`, `queue add`, `queue add --dry-run` and queue runs print
+`WARN task text prescribes an answer format (QUOTE:, AT:); citation checking recognises only ...` on stderr (a queue
+run also keeps it in the result). Leave the line format to `--cite`, or ask for one of the two forms above. Trailing blank lines are ignored; other lines remain visible even for long answers.
 Add `--require-verified` to exit 17 for any unverified line; existing provider errors take
 precedence. Without it, citation findings do not change the exit code.
 

@@ -10,7 +10,7 @@ scripts/agy-bridge verdicts --repo /path/to/repo --tail 10
 
 Verdicts are append-only JSONL in `.agy-bridge/verdicts.jsonl`, using the same anchored no-follow, owned
 single-link, 0600, locked journal implementation as events. They contain time, job, verdict (`pass`, `fixes`,
-`reject`), reader, evidence and optional note. Do not put task or answer text in evidence/notes. No model response
+`reject`, or `archived` for a result set aside without review), reader, evidence and optional note. Do not put task or answer text in evidence/notes. No model response
 is automatically marked verified. Status lists result names with no verdict; a later verdict is another record.
 A `pass` verdict needs a result, found in one of these locations:
 
@@ -29,6 +29,10 @@ and recent jobs. Pass `--force` to record it anyway. For a queue run with `--que
 same options to `verdict` (the journal stays `.agy-bridge/verdicts.jsonl`). A `fixes` or `reject` verdict on an
 unknown or pending job is recorded with a warning, because a delegate that failed or was refused (for
 example exit 4) writes no result file and its reader must still be able to reject it.
+
+`verdict --bulk --verdict archived --before YYYY-MM-DD [--dry-run]` records `archived` for every result older than
+that date with no verdict yet ([QUEUE.md](QUEUE.md#locking-and-stop-behavior)). An `archived` row says the result
+was not reviewed; it is never a pass, and `--bulk` records no other verdict.
 
 ## Trusted case format
 

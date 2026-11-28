@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 
-from . import config, denylist
+from . import config, denylist, text
 from .refusal import Refusal, Refused
 
 
@@ -19,7 +19,13 @@ def local(root, value, metadata=False):
     if not isinstance(value, str):
         raise config.UsageError('path must be a string')
     if os.path.isabs(value):
-        value = os.path.relpath(value, root)
+        given, value = value, os.path.relpath(value, root)
+        if value == '..' or value.startswith('../'):
+            real = os.path.realpath(given)
+            if real.startswith(root.rstrip(os.sep) + os.sep):
+                raise config.UsageError('%s is outside the repository as written: a component is a symbolic link '
+                                        '(refused); pass the resolved path (%s)' % (text.printable(given),
+                                                                                    text.printable(real)))
     rel = relative(value)
     check = rel
     if metadata and (rel == '.agy-bridge' or rel.startswith('.agy-bridge/')):

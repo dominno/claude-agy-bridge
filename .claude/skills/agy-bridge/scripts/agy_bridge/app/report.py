@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING, Optional, Tuple
 
 from ..core import config
 from ..core.config import SCRATCH_DIR, UsageError
-from ..core.text import strip_invisible
+from ..core.refusal import SymlinkInPath
+from ..core.stage import symlink_message
+from ..core.text import printable, strip_invisible
+from ..port import safety
 
 if TYPE_CHECKING:
     from ..port.model_runner import RunResult
@@ -92,7 +95,8 @@ def resolve_out_path(out: str, repo_root: str) -> str:
         if not inside(parent, scratch):
             raise OutPathRefused("--out inside the repository must be under %s/" % SCRATCH_DIR)
     elif not inside(parent, os.path.realpath(tempfile.gettempdir())):
-        raise OutPathRefused("--out must be in the temp folder or under the repository's %s/" % SCRATCH_DIR)
+        raise OutPathRefused("--out must be in the temp folder (%s) or under the repository's %s/"
+                             % (printable(os.path.realpath(tempfile.gettempdir())), SCRATCH_DIR))
     final = os.path.join(parent, name)
     if os.path.lexists(final):
         raise UsageError("--out already exists; it is never overwritten")
@@ -115,8 +119,9 @@ def write_new_file(path: str, text: str) -> None:
             except FileExistsError:
                 pass
             try:
-                child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                                   dir_fd=parent_fd)
+                child_fd = safety.open_component(parent_fd, name, path)
+            except SymlinkInPath as exc:
+                raise OutPathRefused(symlink_message("--out", exc.component, exc.resolved)) from None
             except OSError:
                 raise OutPathRefused("--out parent could not be opened safely")
             os.close(parent_fd)

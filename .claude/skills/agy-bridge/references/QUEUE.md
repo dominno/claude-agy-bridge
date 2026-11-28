@@ -40,6 +40,16 @@ most 200 characters and redacted when key-shaped. It refuses (exit 4) a job that
 unknown name exits 1 (the usage code, as `verdict --job` does). A runner that listed the job before the cancel skips it and sends nothing. Pass the same
 `--queue-dir`/`--results-dir` as `queue add`.
 
+`add` and `add --dry-run` print `WARN task text prescribes an answer format (...)` on stderr when the job's task
+contains a `QUOTE:`, `AT:` or `FILE:` directive: every queue round checks citations, and a line in a format of the
+task's own becomes `UNVERIFIED (malformed citation line)`. Ask for `QUOTE: <verbatim> AT: <path>:<line>` or leave
+the format to the bridge; both recognised forms are in [CLI.md](CLI.md#citations).
+
+A job file reached through a symlinked folder (on macOS `/tmp` is a link to `/private/tmp`) is refused with
+`queue add refused: path component "tmp" is a symbolic link; pass the resolved path (/private/tmp/...) or the job
+on stdin: agy-bridge queue add - --repo R`; the same message names a symlinked component in `--queue-dir` or
+`--results-dir`.
+
 `add -` accepts JSON on stdin. `add` validates a job and writes it exclusively; existing names in pending,
 archive or results are refused. Producers can also place complete `.job` JSON files into the queue, named
 `<name>.job`; write elsewhere then rename into place to avoid readers seeing an incomplete file. The runner
@@ -172,6 +182,15 @@ not create directories or lock files; it briefly probes an existing lock. Runner
 Use a distinct `--results-dir` for each parallel queue in a repository, and pass the same `--queue-dir` and
 `--results-dir` to `status`, `verdict` and `queue watch --detach`. The default results directory is shared
 and result filenames use the job name.
+
+Old results that nobody will review stay under `results without verdict` until they get a verdict. Set them aside
+with `verdict --bulk --verdict archived --before YYYY-MM-DD --repo R` (add `--dry-run` first to list them): every
+`<results>/<job>.md` last changed before local midnight of that day and with no verdict yet gets one `archived` row
+(reader `bulk-archive` and evidence `archived without review: result older than <date>; not reviewed, not a pass`
+unless `--by`/`--evidence` are given). `status` then shows `archived without review: N` instead of listing them.
+`archived` is not a pass and never counts as one; `--bulk` refuses any other verdict, takes no `--job` or `--note`,
+and a later `pass`, `fixes` or `reject` on such a job is simply another record. Pass the same
+`--queue-dir`/`--results-dir` as the queue.
 
 `verdict --verdict pass` accepts a job with a result in `<results>/<job>.md`, an archive in `<queue>/done/` or
 a direct delegate answer in `.agy-bridge/delegate/<job>.md` (regular file, no symlink). A pass on a job that is

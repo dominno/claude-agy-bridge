@@ -16,9 +16,13 @@ TIMEOUT = 300
 
 def read_input(path):
     path = os.path.abspath(path)
-    with safety.directory(os.path.dirname(path)) as fd:
-        from ..core.stage import _read_regular
-        return _read_regular(fd, os.path.basename(path), 8*1024*1024).decode('utf-8')
+    from ..core.stage import SymlinkInPath, _read_regular
+    try:
+        with safety.directory(os.path.dirname(path)) as fd:
+            return _read_regular(fd, os.path.basename(path), 8*1024*1024).decode('utf-8')
+    except SymlinkInPath as exc:
+        exc.resolved = os.path.realpath(path)  # name the file itself, not only its folder
+        raise
 
 
 def scratch(root):

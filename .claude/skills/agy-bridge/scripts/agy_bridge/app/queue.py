@@ -266,10 +266,16 @@ def status(paths, threshold=300):
             finally:
                 os.close(entry)
         latest=max(latest or (0,''),(info.st_mtime,name))
-    checked={r['job'] for r in verdicts.rows(paths.root)}
+    recorded = verdicts.rows(paths.root)
+    checked = {r['job'] for r in recorded}
+    reviewed = {r['job'] for r in recorded if r['verdict'] != 'archived'}
     # Result names come from the repository tree: escape them like pending job names.
     out += ['last result: '+(_display_name(latest[1]) if latest else 'none'),
             'results without verdict: '+(', '.join(_display_name(n[:-3]) for n in results if n[:-3] not in checked) or 'none')]
+    archived = sum(1 for n in results if n[:-3] in checked and n[:-3] not in reviewed)
+    if archived:
+        # Set aside with verdict --bulk --verdict archived: not reviewed, and never counted as a pass.
+        out.append('archived without review: %d' % archived)
     return '\n'.join(out)
 
 

@@ -1,6 +1,40 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-11-28)
+
+Findings from a real adoption on macOS. This release also contains every change listed under "Earlier unreleased
+changes" below (macOS `implement`, `delegate --remote-agent`, remote queue jobs and their fixes).
+
+### Added
+
+- `verdict --bulk --verdict archived --before YYYY-MM-DD [--by R] [--evidence E] [--dry-run]` sets aside every
+  result in `<results>/` last changed before local midnight of that day that has no verdict yet. It records one
+  `archived` row per job (default reader `bulk-archive`, default evidence `archived without review: result older
+  than <date>; not reviewed, not a pass`), so `status` stops listing old results under `results without verdict`
+  and shows `archived without review: N` instead. `archived` is not a pass: `--bulk` refuses any other verdict, a
+  later `pass`/`fixes`/`reject` is a new record, and `--dry-run` lists the jobs and records nothing.
+  `verdict --verdict archived --job NAME --by R --evidence E` archives one job.
+- Citation checking also accepts `QUOTE: <verbatim> AT: <path>[:<line>]` lines, verified like the `FILE: ... |
+  QUOTE: "..." | CLAIM: ...` form (the quote must occur in that exact sent file; same 8-character and 25-word
+  limits; one pair of surrounding `"` or backticks is dropped). The line number is advisory: a quote found in the
+  file but not on that line stays VERIFIED with reason `quote exists; not on line N`.
+- `queue add`, `queue add --dry-run`, queue runs and `delegate`/`dry-run` with `--cite` print
+  `WARN task text prescribes an answer format (QUOTE:, AT:, ...)` when the task itself contains `QUOTE:`, `AT:` or
+  `FILE:` directives, naming the two recognised citation forms; a task-prescribed format otherwise turns every
+  line into `malformed citation line`.
+
+### Fixed
+
+- A symlinked path component is still refused, but the message now names it and the fix instead of the bare
+  `queue add failed at tmp: Not a directory`: `queue add refused: path component "tmp" is a symbolic link; pass
+  the resolved path (/private/tmp/...) or the job on stdin: agy-bridge queue add - --repo R`. The same message
+  comes from every pinned no-follow walk (queue and results folders, job files, `status`, grading inputs). An
+  absolute `--file`, `--queue-dir` or `--results-dir` that lies outside the repository only as written (for
+  example `/tmp/...` for a repository under `/private/tmp`) is refused with `path is outside the repository as
+  written: a component is a symbolic link (refused); pass the resolved path (...)`. An `--out` parent that turns
+  into a symlink names the component, and the R8 `--out` refusal names the actual temp folder.
+
+## Earlier unreleased changes (included in 0.4.0)
 
 ### Added
 

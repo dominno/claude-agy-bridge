@@ -6,7 +6,7 @@ import os
 import signal
 import sys
 
-from ..core import config, stage
+from ..core import citations, config, stage
 from ..core.config import UsageError
 from ..port import launcher, safety
 from . import queue, report
@@ -19,21 +19,31 @@ def add(paths, job_file, dry_run):
 
     if job_file != '-' and not os.path.lexists(job_file):
         raise UsageError('job file not found: ' + stage.printable(job_file))
-    raw = sys.stdin.read(queue.MAX_JOB_BYTES + 1) if job_file == '-' else grading.read_input(job_file)
+    try:
+        raw = sys.stdin.read(queue.MAX_JOB_BYTES + 1) if job_file == '-' else grading.read_input(job_file)
+    except stage.SymlinkInPath as exc:
+        exc.hint = 'the job on stdin: agy-bridge queue add%s - --repo %s' % (
+            ' --dry-run' if dry_run else '', stage.shell_arg(paths.root))
+        raise
     if len(raw.encode('utf-8')) > queue.MAX_JOB_BYTES:
         raise UsageError('job is over 128 KiB')
     job = json.loads(raw)
+    # Every queue round checks citations, so a task that prescribes its own line format loses them silently.
+    warning = citations.format_warning(job.get('task')) if isinstance(job, dict) and isinstance(
+        job.get('task'), str) else None
     if dry_run:
         head, result = queue.preview(paths, job)
         for line in head + list(result.preview):
             say(line)
-        sys.stderr.writelines(result.diagnostics)
+        sys.stderr.writelines(result.diagnostics)  # holds the format warning, from the dry-run delegation
         if result.not_sent:
             info = result.metadata
             say(report.render('', info['model'], len(info['files']), info['total_bytes'], info['seconds'],
                               info['truncated'], None, result.not_sent, None))
         return result.exit_code
     say(paths.add(job))
+    if warning:
+        fail(warning)
     try:
         runner = paths.running()
     except (OSError, stage.Refused):

@@ -16,6 +16,9 @@ class UnknownJob(config.UsageError):
 
 
 DELEGATE_DIR = config.SCRATCH_DIR + '/delegate'
+# A reader's assessment of the answer. 'archived' is none of them: the result was set aside without review.
+VERDICTS = ('pass', 'fixes', 'reject', 'archived')
+ARCHIVED_BY = 'bulk-archive'
 
 
 def _delegate_result(root, job):
@@ -113,8 +116,8 @@ def record(root, job, verdict, by, evidence, note=None, force=True, allow=False,
     exit 4) writes no result file, and its reader must still be able to reject it.
     """
     name(job)
-    if verdict not in ('pass', 'fixes', 'reject'):
-        raise config.UsageError('verdict must be pass, fixes or reject')
+    if verdict not in VERDICTS:
+        raise config.UsageError('verdict must be pass, fixes, reject or archived')
     for text in (by, evidence):
         if not isinstance(text, str) or not text.strip() or len(text) > 8000:
             raise config.UsageError('reader and evidence must be nonempty strings of at most 8000 characters')
@@ -158,7 +161,49 @@ def rows(root, count=None):
     output = []
     for line in events.tail(root, count, name='verdicts.jsonl'):
         row = json.loads(line)
-        if not isinstance(row, dict) or not isinstance(row.get('job'), str) or row.get('verdict') not in ('pass', 'fixes', 'reject'):
+        if not isinstance(row, dict) or not isinstance(row.get('job'), str) or row.get('verdict') not in VERDICTS:
             raise events.EventError('invalid verdict record')
         output.append(row)
     return output
+
+
+def _result_mtime(root, rel, name):
+    """The mtime of an owned, single-link, regular <rel>/<name> opened without following links, else None."""
+    try:
+        with safety.directory(os.path.join(root, rel)) as parent:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+            try:
+                safety.regular(fd)
+                return os.fstat(fd).st_mtime
+            finally:
+                os.close(fd)
+    except OSError:
+        return None
+
+
+def archive_before(root, before, by=None, evidence=None, dry_run=False, allow=False, queue_dir=None,
+                   results_dir=None):
+    """Record 'archived' for every <results>/<job>.md last changed before the local midnight that starts the day
+    `before` (YYYY-MM-DD) and that has no verdict yet; return the job names (sorted). Never a pass: the row says
+    the result was not reviewed. dry_run lists the names and records nothing."""
+    import time
+
+    try:
+        cutoff = time.mktime(time.strptime(before, '%Y-%m-%d'))
+    except (TypeError, ValueError, OverflowError):
+        raise config.UsageError('--before must be a date YYYY-MM-DD') from None
+    paths = Paths(root, queue_dir, results_dir, allow)
+    checked = {row['job'] for row in rows(root)}
+    names = []
+    for entry in paths.names(paths.results, '.md'):
+        job = entry[:-3]
+        if job in checked or not NAME.fullmatch(job) or scan_bytes(job.encode('utf-8')):
+            continue
+        mtime = _result_mtime(root, paths.results, entry)
+        if mtime is not None and mtime < cutoff:
+            names.append(job)
+    if not dry_run:
+        evidence = evidence or 'archived without review: result older than %s; not reviewed, not a pass' % before
+        for job in names:
+            record(root, job, 'archived', by or ARCHIVED_BY, evidence)
+    return names

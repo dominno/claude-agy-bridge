@@ -59,13 +59,20 @@ def _verdict(sub) -> None:
                                    "(--queue-dir/--results-dir, default <repo>/.agy-bridge/queue and results) "
                                    "unless --force; a pass on a pending or failed-only job is refused; "
                                    "fixes/reject on an unknown or pending job "
-                                   "(e.g. a failed delegate with no result) warn and record")
+                                   "(e.g. a failed delegate with no result) warn and record; "
+                                   "--bulk --verdict archived --before YYYY-MM-DD sets aside every older result "
+                                   "without a verdict (recorded as archived: not reviewed, never a pass)")
     v.set_defaults(handler=cmd_workflow, workflow=cmd_verdict)
     repo_options(v, folders=True)
-    v.add_argument('--job', required=True)
-    v.add_argument('--verdict', choices=('pass','fixes','reject'), required=True)
-    v.add_argument('--by', required=True)
-    v.add_argument('--evidence', required=True)
+    v.add_argument('--job', help='the job name (required unless --bulk)')
+    v.add_argument('--verdict', choices=('pass','fixes','reject','archived'), required=True)
+    v.add_argument('--by', help='the reader (required unless --bulk; default there: bulk-archive)')
+    v.add_argument('--evidence', help='what was checked (required unless --bulk)')
+    v.add_argument('--bulk', action='store_true', help='with --verdict archived and --before: archive every result '
+                                                       'without a verdict last changed before that date')
+    v.add_argument('--before', metavar='YYYY-MM-DD', help='with --bulk: results last changed before local '
+                                                          'midnight of this day')
+    v.add_argument('--dry-run', action='store_true', help='with --bulk: list the results, record nothing')
     v.add_argument('--note', nargs='?', const='')
     v.add_argument('--force', action='store_true', help='record a pass even when no result for --job exists '
                                                      '(fixes/reject on an unknown job only warn)')

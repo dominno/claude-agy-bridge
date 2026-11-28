@@ -100,7 +100,8 @@ From a terminal: `agy-bridge dry-run -f src/a.py -- "Explain what a.py does"`, t
 - **manifest**: the list of files, sizes and hashes that would be sent, plus `FILES NOT SENT` notices.
 - **staging folder**: the temporary copy `agy` works in; it never runs in your repository.
 - **watcher**: a background process (`queue watch`) that sends queued jobs as they arrive.
-- **verdict**: your recorded `pass`, `fixes` or `reject` after checking an answer yourself.
+- **verdict**: your recorded `pass`, `fixes` or `reject` after checking an answer yourself, or `archived` for an
+  old result set aside without review (never a pass).
 
 ## Skill actions
 
@@ -152,6 +153,7 @@ Every answer is **unverified model output** until you check it. Record what you 
 ```sh
 agy-bridge verdict --repo /path/to/repo --job review-parser-01 --verdict pass --by me --evidence "Checked the tests"
 agy-bridge verdicts --repo /path/to/repo --tail 10
+agy-bridge verdict --repo /path/to/repo --bulk --verdict archived --before 2026-11-01 --dry-run
 ```
 
 `grade-mutants` and `apply-diff` run a trusted test case against model-written code, only in a scratch copy inside
@@ -166,7 +168,7 @@ A detached watcher keeps running the code it started with. Before updating or un
 
 ## Project status
 
-Version 0.3.0. The test suite uses a fake `agy`; the bridge has been run once against the real `agy` 1.4.3 with
+Version 0.4.0. The test suite uses a fake `agy`; the bridge has been run once against the real `agy` 1.4.3 with
 fake files only, and a basic delegation also worked on 1.4.12. Authenticated end-to-end implementation jobs (edit,
 offline check, resume, apply) were run on macOS 13 with AGY 1.5.17 and a signed-in dedicated profile (synthetic
 files), and on Linux (Debian 12, Bubblewrap 0.8.0) with AGY 1.5.18, including cancel and resume. [What was measured](.claude/skills/agy-bridge/references/COMPAT.md).

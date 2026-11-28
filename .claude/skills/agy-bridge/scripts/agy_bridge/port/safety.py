@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
 import secrets
 import stat
 import time
 
 from ..core import stage
+from ..core.refusal import SymlinkInPath
 # The path rules live in core; workflow code reaches them through this module.
 from ..core.repo_paths import local, relative  # noqa: F401
 
@@ -23,12 +25,30 @@ def directory(path, create=False):
                     os.mkdir(part, 0o700, dir_fd=fd)
                 except FileExistsError:
                     pass
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            child = open_component(fd, part, path)
             os.close(fd)
             fd = child
         yield fd
     finally:
         os.close(fd)
+
+
+def open_component(fd, part, path):
+    """Open one directory component under fd without following it; a symlink raises SymlinkInPath naming it."""
+    try:
+        return os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+    except OSError as exc:
+        # O_NOFOLLOW reports a symlink as ELOOP (Linux) or ENOTDIR (macOS with O_DIRECTORY).
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR) and _is_link(fd, part):
+            raise SymlinkInPath(part, path, os.path.realpath(path)) from None
+        raise
+
+
+def _is_link(fd, part):
+    try:
+        return stat.S_ISLNK(os.stat(part, dir_fd=fd, follow_symlinks=False).st_mode)
+    except OSError:
+        return False
 
 
 def regular(fd):

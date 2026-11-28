@@ -149,6 +149,10 @@ claim with a real quote can be VERIFIED. Source prompt injection remains possibl
 still applies before checking. Citation reports bypass the ordinary long-answer preview so lines are not lost;
 the existing output cap still bounds the answer, reports truncation and keeps exit 16. `--require-verified`
 requires `--cite`; it adds exit 17 only after an otherwise successful run with unverified lines.
+The second form `QUOTE: <verbatim> AT: <path>[:<line>]` is parsed with the same fixed-delimiter, linear split (the
+last ` AT: `) and the same path, length and substring rules; its line number only adds an advisory note and never
+turns an absent quote into VERIFIED or a present one into UNVERIFIED. A task containing `QUOTE:`, `AT:` or `FILE:`
+directives gets a warning, never a change to what is checked.
 
 ## Repository event journal
 `<repo>/.agy-bridge/events.jsonl` is separate from the legacy home log. It stores UTC `ts`, `model`, sent `files`
@@ -195,7 +199,9 @@ No commands run from jobs or configuration. The watcher runs the existing delega
 staging or scan implementation. A key scan file drop omits the refused file; it never exempts its bytes.
 
 Queue/results paths must remain within the validated repository. Every directory component is pinned with
-no-follow descriptors; symlink/hard-link/nonregular inputs refuse. Only the reserved workflow-storage prefix
+no-follow descriptors; symlink/hard-link/nonregular inputs refuse. A symlinked component is reported by name with
+its resolved path as a suggestion (`... refused: path component "tmp" is a symbolic link; pass the resolved path
+(...)`); the bridge never opens the resolved path itself, and key-shaped names in the message are redacted. Only the reserved workflow-storage prefix
 `.agy-bridge/` is excepted from the storage denylist; it remains denied as an input. Overrides cannot enter
 other denied folders. Results/jobs use exclusive writes and no-overwrite archive moves. A persistent advisory
 PID lock covers both run and watch; another runner refuses. Status uses lock state, not PID existence alone.
@@ -216,6 +222,8 @@ Verdicts reuse the events journal's pinned, locked, owned single-link file check
 job, reader, verdict, evidence/note and timestamp; callers must keep answer/task content out of evidence.
 It is local metadata, not a signature or access-control mechanism. A malicious same-uid process is outside
 the threat model and can forge local files. Stats parse only result headers, never answer rounds.
+`verdict --bulk` records only `archived` (not reviewed, never a pass) and only for result files opened without
+following links as owned single-link regular files; `pass`, `fixes` and `reject` stay per job.
 
 ## Explicit local graders
 

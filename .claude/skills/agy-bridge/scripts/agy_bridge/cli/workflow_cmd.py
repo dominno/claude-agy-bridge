@@ -10,9 +10,35 @@ from ..core.config import UsageError
 from .output import fail, refused, say
 
 
+def _check_verdict_args(args):
+    if args.bulk:
+        if args.verdict != 'archived':
+            raise UsageError('--bulk records only --verdict archived (pass, fixes and reject need a reader per job)')
+        if args.job or args.note is not None:
+            raise UsageError('--bulk takes no --job or --note')
+        if not args.before:
+            raise UsageError('--bulk requires --before YYYY-MM-DD')
+        return
+    for flag, value in (('--before', args.before), ('--dry-run', args.dry_run)):
+        if value:
+            raise UsageError('%s needs --bulk' % flag)
+    if not args.by or not args.evidence:
+        raise UsageError('--by and --evidence are required (unless --bulk)')
+    if not args.job:
+        raise UsageError('--job is required (unless --bulk)')
+
+
 def cmd_verdict(args, root):
     from ..app import verdicts
 
+    _check_verdict_args(args)
+    if args.bulk:
+        names = verdicts.archive_before(root, args.before, args.by, args.evidence, args.dry_run,
+                                        args.allow_non_git_root, args.queue_dir, args.results_dir)
+        shown = ', '.join(stage.printable(n) for n in names) or 'none'
+        say(('would archive %d result(s): %s' if args.dry_run else 'archived %d result(s) without review: %s')
+            % (len(names), shown))
+        return config.EXIT_OK
     try:
         warning = verdicts.record(root, args.job, args.verdict, args.by, args.evidence, args.note, force=args.force,
                                   allow=args.allow_non_git_root, queue_dir=args.queue_dir,

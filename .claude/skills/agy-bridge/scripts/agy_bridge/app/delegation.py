@@ -173,6 +173,9 @@ def _prepare(run: _Run):
         raise UsageError('give the task after "--", for example: -- "summarise these files"')
     if request.require_verified and not request.cite:
         raise UsageError("--require-verified requires --cite")
+    warning = citations.format_warning(task) if request.cite else None
+    if warning:
+        run.fail(warning)
     run.model = config.validate_model(request.model)
     remote_delegation.validate_project(request.remote_project)
     if request.remote_project and not request.remote:

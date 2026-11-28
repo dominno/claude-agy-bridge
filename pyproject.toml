@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agy-bridge"
-version = "0.3.0"
+version = "0.4.0"
 description = "Delegate read-only tasks and isolated coding jobs to the Antigravity CLI from Claude Code or Codex."
 requires-python = ">=3.9"
 license = { text = "MIT" }
